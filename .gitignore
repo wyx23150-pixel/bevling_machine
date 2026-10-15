@@ -1,0 +1,35 @@
+# InoProShop / CODESYS user preferences and project locks
+*.opt
+*.project.~u
+*.project.lock
+
+# Automatic saves and local backup copies
+*.autosave
+*.backup
+*.projectbackup
+*.bak
+
+# Generated compiler caches and PLC application binaries
+*.precompilecache
+*.compileinfo
+*.bootinfo
+*.bootinfo_guids
+*.app
+*.crc
+
+# Temporary task-configuration exports used during debugging
+/_taskcfg.xml
+/_taskcfg_fixed.xml
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Windows / macOS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Keep the .project source, .projectarchive checkpoints, documentation,
+# and any source files under CppProject/ or Data/ in version control.
