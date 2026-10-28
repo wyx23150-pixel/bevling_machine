@@ -1,0 +1,12 @@
+(* 模块说明：手动按钮接口。点动和运行按住有效，定位使用上升沿；手动请求同样经过互锁。 *)
+TYPE ST_ManualCommand :
+STRUCT
+xJogPositive : BOOL; (* 手动正向点动，按住有效，释放后取消；只支持定位轴。 *)
+xJogNegative : BOOL; (* 手动反向点动，按住有效；与正向同时按下会被拒绝。 *)
+xMove : BOOL; (* 手动定位按钮，上升沿锁存目标，动作保持到本次序号完成。 *)
+xRun : BOOL; (* 手动连续运行按钮，按住有效、松开停止，仅支持 D1/D3/G5/G6。 *)
+lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连续运行和点动不使用该位置。 *)
+lrVelocity : LREAL := 10.0; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
+END_STRUCT
+END_TYPE
+

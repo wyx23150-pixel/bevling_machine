@@ -1,0 +1,30 @@
+(* 模块说明：提供给监控和上位机的整机状态。可从主步骤、支线步骤、报警和互锁阻挡编号定位等待原因。 *)
+TYPE ST_MachineStatus :
+STRUCT
+eState : E_MachineState; (* 整机状态，见 E_MachineState；调试时先确认是否已初始化及处于正确模式。 *)
+eMode : E_MachineMode; (* 本地模式旋钮的当前选择：Manual 手动，Automatic 自动；上位机仅可读取。 *)
+eAutoStep : E_AutoStep; (* 自动主流程步骤；送料、避让、切割、收尾等状态见 E_AutoStep。 *)
+xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+xRealBackendAvailable : BOOL; (* 真实设备适配是否已具备；当前框架固定 FALSE。 *)
+xRemoteStartStopAllowed : BOOL; (* 当前是否允许上位机启停，供只读状态发布；与物理手动/自动模式独立。 *)
+xInitialized : BOOL; (* 初始化完成标志；停止、运行中切换模式或故障会清除。 *)
+xReady : BOOL; (* 整机已经初始化并处于 Ready 状态，可接受自动启动；手动状态下不置该位。 *)
+xMaterialAtLength : BOOL; (* 定长光电到位状态；自动送料须先离开再到位，并满足 D5 下降。 *)
+xCycleComplete : BOOL; (* 一个扫描周期的整循环完成脉冲，可用于计数或上位机提示。 *)
+udiCycleCount : UDINT; (* 已完成的自动整循环计数；包括机械手移料等三路收尾。 *)
+udiAlarm : UDINT; (* 整机锁存报警码；0 无报警，1001 安全许可，3001 实机未接入，10000+索引为设备故障。 *)
+uiBlockedDevice : UINT; (* 本扫描最后一个被互锁阻挡的设备索引；0 表示无阻挡，可结合设备状态排查。 *)
+uiManualReject : UINT; (* 本扫描最后一个被拒绝的手动设备索引；0 无拒绝，检查相反按钮或动作类型。 *)
+uiClearLengthStep : UINT; (* 避让支线 P 的当前步骤：10 升起 D5，20 移开 D4，1000 完成。 *)
+uiClearTransferStep : UINT; (* 避让支线 Q 当前步骤：10 降 G4，20 松 G3，30 降 G2，1000 完成。 *)
+uiPostStep : UINT; (* 收尾总步骤：10 抬刀，20 抬压，30 等待三路完成，1000 结束。 *)
+uiReturnKnifeStep : UINT; (* 收尾支线 A：10 喷油，20 D2 回刀，1000 完成。 *)
+uiUnloadStep : UINT; (* 机械手移料支线 B 步骤，10..110 每步加 10，1000 完成；详见 FB_Unload。 *)
+uiResetLengthStep : UINT; (* 收尾支线 C：10 D4 定位，20 D5 下降，30 确认下降，1000 完成。 *)
+uiInitializeStep : UINT; (* 初始化步骤：10 整理刀/压/夹爪，20 避让，30 初始定位，40 定长下降，1000 完成。 *)
+uiActiveMaterialModel : UINT; (* 已采纳的运行料型，取自运行配方；可能与尚未生效的参数区不同。 *)
+wRemoteAckSequence : WORD; (* 整机已处理的上位机命令序号；应结合 uiRemoteResult 判断是否接受。 *)
+uiRemoteResult : UINT; (* 远程处理结果：0 接受，1 未授权，2 不支持命令，3 状态/本地停止不允许，5 配方不合法。 *)
+END_STRUCT
+END_TYPE
+

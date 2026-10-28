@@ -1,0 +1,37 @@
+(* 模块说明：旧单轴 Demo 的操作和监控变量。新切割机框架不使用这些变量；旧 Demo 当前未挂周期任务。 *)
+VAR_GLOBAL
+    (* 旧 Demo 操作命令：仅供单轴测试，新整机流程不使用。 *)
+    xEnable     : BOOL; (* 旧 Demo 的 Axis_1 伺服使能请求，TRUE 上使能，FALSE 关闭。 *)
+    xReset      : BOOL; (* 旧 Demo 轴故障复位请求，接 MC_Reset.Execute。 *)
+    xStop       : BOOL; (* 旧 Demo 停止请求；停止完成后释放锁定，再决定是否重新启动。 *)
+    xJogFwd     : BOOL; (* 历史正向点动入口，当前旧 Demo 正文未接入。 *)
+    xJogRev     : BOOL; (* 历史反向点动入口，当前旧 Demo 正文未接入。 *)
+    xMoveRel    : BOOL; (* 历史相对定位入口，当前旧 Demo 正文未接入。 *)
+    xMoveAbs    : BOOL; (* 历史绝对定位入口，当前旧 Demo 正文未接入。 *)
+    xStartCycle : BOOL; (* 旧 Demo 单次往返启动，上升沿有效；当前 Demo 未周期调用。 *)
+
+    rRelDist    : LREAL := 100.0; (* 历史单次相对距离 mm，当前往返正文不采用该参数。 *)
+    rTargetPos  : LREAL := 0.0; (* 历史绝对目标位置 mm，当前往返正文不采用该参数。 *)
+
+    (* 旧 Demo 运动参数：实际采用及限幅见各参数同行说明。 *)
+    rJogVel     : LREAL := 10.0; (* 历史点动速度 mm/s，当前往返正文不采用该参数。 *)
+    rVel        : LREAL := 30.0; (* 旧 Demo 往返速度 mm/s，正文限幅为 1..10。 *)
+    rAcc        : LREAL := 200.0; (* 旧 Demo 加速度 mm/s²，正文限幅为 10..200。 *)
+    rDec        : LREAL := 200.0; (* 旧 Demo 减速度 mm/s²，正文限幅为 10..200。 *)
+    rStroke     : LREAL := 100.0; (* 旧 Demo 请求的单程距离 mm，正文使用绝对值并限制最大 20。 *)
+    tDwell      : TIME  := T#1S; (* 旧 Demo 每个行程端点停留时间。 *)
+
+    (* 旧 Demo 运行反馈：仅在旧程序被调用时更新。 *)
+    xPowered    : BOOL; (* MC_Power.Status，伺服已使能反馈。 *)
+    xAxisReady  : BOOL; (* 旧 Demo 中由已使能、非忙、无错误组合得到的可用标志。 *)
+    xBusy       : BOOL; (* 往返功能块或停止功能块正忙。 *)
+    xDisabled   : BOOL; (* 旧 Demo 根据未使能得到的显示状态。 *)
+    xStandStill : BOOL; (* 旧 Demo 根据已使能且非忙得到的显示状态，不是独立轴状态读取。 *)
+    xStopping   : BOOL; (* 停止功能块正在执行。 *)
+    xErrorStop  : BOOL; (* 旧 Demo 综合错误显示，与 xAxisError 同步。 *)
+    xAxisError  : BOOL; (* 使能、往返、复位或停止功能块任一报错。 *)
+    iAxisErrorID: DWORD; (* 历史错误码显示变量，当前正文未更新，需读取实际功能块 ErrorID。 *)
+    rActPos     : LREAL; (* MC_ReadActualPosition 返回的 Axis_1 实际位置，单位 mm。 *)
+    iState      : INT; (* 旧 Demo 当前 iCycle 步骤镜像，便于在线监控。 *)
+END_VAR
+

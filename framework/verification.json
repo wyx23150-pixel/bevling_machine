@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-15",
+  "frameworkObjects": 48,
+  "projectCodeObjects": 49,
+  "sourceReadbackDifferences": [],
+  "compileProbeRemoved": true,
+  "compileResult": "Compilation complete for C:\\Users\\Lenovo\\Desktop\\PLC\\huichuan\\Beveling machine\\beveling\\beveling.project.\n0 error(s), 2 warning(s).\n\nWarnings:\nWARNING: 未加载库(CmpLog)，将会导致高效数组越界/除零诊断日志不能输出；如需此功能，请加载对应库。\nWARNING: No POU defined for task 'MainTask'",
+  "hardwareLoginPerformed": false,
+  "plcDownloadPerformed": false,
+  "runtimeCycleTestPerformed": false,
+  "chineseCommentUpdate": {
+    "date": "2026-10-16",
+    "codeObjects": 49,
+    "variableAndFieldDeclarations": 475,
+    "nativeTextSectionsCompared": 78,
+    "nativeUnicodeMismatches": [],
+    "nonCommentTokensChanged": false,
+    "regenerationDifferences": [],
+    "compiledAfterCommentUpdate": false,
+    "runtimeTestAfterCommentUpdate": false,
+    "projectSaved": true
+  },
+  "physicalPanelControlUpdate": {
+    "date": "2026-10-21",
+    "applied": [
+      "ST_OperatorCommand",
+      "ST_PanelInputs",
+      "ST_RemoteCommand",
+      "ST_MachineStatus",
+      "GVL_Interface",
+      "GVL_Parameters",
+      "GVL_Simulation",
+      "GVL_IO",
+      "GVL_Modbus",
+      "FB_ModbusInterface",
+      "FB_PanelInput",
+      "FB_Machine",
+      "PLC_PRG"
+    ],
+    "codeObjects": 52,
+    "readbackDifferences": [],
+    "compiled": false,
+    "plcLogin": false,
+    "plcDownload": false,
+    "parameterModbusRegistersMapped": false,
+    "physicalInputAddressesMapped": false,
+    "modeSource": "physical panel selector, simulated by ST_PanelInputs in simulation mode"
+  }
+}

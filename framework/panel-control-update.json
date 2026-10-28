@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-21",
+  "applied": [
+    "ST_OperatorCommand",
+    "ST_PanelInputs",
+    "ST_RemoteCommand",
+    "ST_MachineStatus",
+    "GVL_Interface",
+    "GVL_Parameters",
+    "GVL_Simulation",
+    "GVL_IO",
+    "GVL_Modbus",
+    "FB_ModbusInterface",
+    "FB_PanelInput",
+    "FB_Machine",
+    "PLC_PRG"
+  ],
+  "codeObjects": 52,
+  "readbackDifferences": [],
+  "compiled": false,
+  "plcLogin": false,
+  "plcDownload": false
+}
