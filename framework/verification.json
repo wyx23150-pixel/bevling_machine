@@ -100,14 +100,14 @@
     "warningNote": "两条警告均为改造前已存在，与本次改动无关。",
     "sourceSynced": true,
     "sourceEncoding": "UTF-8 without BOM, CRLF",
-    "plcLogin": false,
-    "plcDownload": false,
+    "plcLogin": true,
+    "plcDownload": true,
     "runtimeCycleTestPerformed": false,
-    "hardwareMotionVerified": false,
-    "homingImplemented": false,
+    "hardwareMotionVerified": true,
+    "homingImplemented": true,
     "safetyCircuitWired": false,
     "knownGaps": [
-      "未做回零：真实轴拒绝绝对定位（报 2002），必须开 xRelativeVerify 才能通过初始化第 30 步。",
+      "回零方式、快慢速、加速度沿用轴配置里的调试值，尚未按机械实际行程标定。",
       "安全许可靠两级软件旁路（xSafetyBypass + xSafetyBypassConfirm），不是安全级回路。",
       "轴单位、软限位、CSP 模式、站地址需在轴对象与驱动器侧配置，程序不替代这些设置。",
       "台达 ASDA-B3 编码器分辨率与汇川 SV660N 不同，必须各自用百分表标定，禁止照抄 8388608。",
@@ -161,9 +161,10 @@
       "notChanged": "FB_Interlocks 未改。D4 要求 D5 升起在自动流程里由 FB_ClearLength 先升 D5 再移 D4 保证，属正确互锁；手动调试期用 xInterlockBypass 放宽，或先手动把 D5 点动回 0.0。",
       "compiled": true,
       "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）",
-      "downloaded": false,
-      "hardwareRetestPerformed": false,
-      "warning": "未下载复测。xInterlockBypass 只放宽 D2/D4 机构互锁，不放宽 xPermit 与安全许可；真机双向点动前仍应把 lrVerifyVelocity 压到 0.2 以内。"
+      "downloaded": true,
+      "hardwareRetestPerformed": true,
+      "warning": "未下载复测。xInterlockBypass 只放宽 D2/D4 机构互锁，不放宽 xPermit 与安全许可；真机双向点动前仍应把 lrVerifyVelocity 压到 0.2 以内。",
+      "userVerification": "2026-10-30 10:21 用户反馈「验证了没问题」并已提交版本管理；未逐项记录测试明细。"
     },
     "interlockBypassManualOnly": {
       "date": "2026-10-30",
@@ -174,9 +175,10 @@
       "versionMarker": "下载后若监视表能读到 PLC_PRG.fbMachine.fbInterlocks.xManualMode，即证明新程序已在运行；该变量在旧程序里不存在。",
       "compiled": true,
       "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）；代码大小 2005662 → 2005710 字节，确认重新构建",
-      "downloaded": false,
-      "hardwareRetestPerformed": false,
-      "lineEndingRepair": "本次发现 10 个 .st 为 CRCRLF（cr 数 = 2×lf）。FB_Interlocks.st 在规范化时被误写成每行之间插空行，已按原文重写；全部 .st 已统一为 crlf == lf == cr 的纯 CRLF、无 BOM。"
+      "downloaded": true,
+      "hardwareRetestPerformed": true,
+      "lineEndingRepair": "本次发现 10 个 .st 为 CRCRLF（cr 数 = 2×lf）。FB_Interlocks.st 在规范化时被误写成每行之间插空行，已按原文重写；全部 .st 已统一为 crlf == lf == cr 的纯 CRLF、无 BOM。",
+      "userVerification": "2026-10-30 10:21 用户反馈「验证了没问题」并已提交版本管理；未逐项记录测试明细。"
     },
     "manualModeNoInterlock": {
       "date": "2026-10-30",
@@ -189,8 +191,86 @@
       "regressionRisk": "手动点动 D4 时若 D5 仍在 1.0，现在会真的拖过去，无任何拦截；D8 转平台、G1 下压、G9 下刀、D7 平移同理。手动试车必须人工确认姿态。",
       "compiled": true,
       "compileResult": "0 error(s), 2 warning(s)；代码大小 2005710 → 2005654 字节，确认重新构建",
-      "downloaded": false,
+      "downloaded": true,
+      "hardwareRetestPerformed": true,
+      "userVerification": "2026-10-30 10:21 用户反馈「验证了没问题」并已提交版本管理；未逐项记录测试明细。",
+      "remainingRisk": "手动模式无任何互锁拦截，D5 在下位时点动 D4 会真的拖过去。硬干涉条件待后续按调试情况逐条补回。"
+    },
+    "homingIntegration": {
+      "date": "2026-10-30",
+      "trigger": "用户在轴配置里加好两个轴的“上位机回零”并在在线调试中验证通过，要求把回零改成实际程序；同时要求手动模式不必先初始化就能动作。",
+      "prerequisite": "回零方式（homing method）、快慢速、加速度全部在轴配置（ASDA_E3_1 / Axis_1 的回零页）中设定，已在调试面板验证。PLC 侧只负责发 MC_Home 并给出完成后的坐标。",
+      "changes": [
+        "E_DeviceAction 新增 Home := 5。",
+        "ST_DeviceStatus 新增 xHomed，用于判断本轴上电后是否已回零。",
+        "ST_ManualCommand 新增 xHome，手动回零按钮（上升沿触发，保持到完成，只允许 D2/D4）。",
+        "ST_RealDeviceSettings 新增 lrHomePosition（MC_Home.Position，默认 0.0）与 tHomeTimeout（默认 30 s）。",
+        "FB_RealAxis 新增 fbHome(MC_Home)、相位 60、tonHome 超时、xHomed 内部状态，并在 fbHome.Done 时置 xHomed。",
+        "FB_RealAxis 的 Position 分支改为「已回零优先绝对定位」，xHomed 或 xAbsoluteAllowed 为 TRUE 时走相位 20，否则才考虑 xRelativeVerify。",
+        "FB_Initialize 在步骤 20 与 30 之间插入步骤 25，给 D2/D4 下发 Home；步骤 30 的绝对定位因此总能拿到已回零的轴。",
+        "FB_Machine 初始化准入去掉「有真实轴必须开 xRelativeVerify」，因为回零已并入初始化流程。",
+        "ST_MachineStatus 新增 xRealAxesHomed，汇总所有已接管真实轴的回零状态。"
+      ],
+      "errorCodes": {
+        "2004": "回零超时（tHomeTimeout），不置完成位，由上层按步骤超时暴露",
+        "40000 + MC": "fbHome.Error 的 MC 错误码"
+      },
+      "behaviorChange": "回零成功后 Position 命令自动走绝对定位，不再需要 xRelativeVerify；xRelativeVerify 语义收窄为“未回零时的临时替代”。",
+      "risk": "xHomed 是普通变量，断电和完整下载都会清零。增量编码器断电后位置不可信，必须重新回零；这是刻意保留的保守行为，未做成 RETAIN。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)；代码大小 2005654 → 2011638 字节，确认重新构建",
+      "downloaded": true,
+      "hardwareRetestPerformed": false,
+      "warning": "未下载复测。首次回零前把 lrVerifyVelocity 压到 0.2~0.5，并确认原点开关在行程内、回零方向朝向安全侧。",
+      "note": "14:12 确认已下载并在运行：能读到 fbRealD4.xHomed（旧版无此变量），eState=Manual、xPermit=TRUE、uiSafetySource=2。"
+    },
+    "manualModeNoInit": {
+      "date": "2026-10-30",
+      "userRequest": "手动模式不需要初始化应该也能动作，不然万一开机初始化没进行，手动也无法控制了。",
+      "change": "FB_Machine 第七段新增：Stopped 且 eMode=Manual 且未按停止时，直接置 eState=Manual、eActiveMode=Manual。自动模式仍需先初始化到 Ready。",
+      "stopBehavior": "按住停止按钮时留在 Stopped（条件含 NOT stCommand.xStop），松开后自动回到 Manual；报警锁存时 eState=Fault，不会进 Manual。",
+      "xManualReleased": "手动进入联锁的“全部按钮释放”判定已计入 xHome，避免带着回零按钮进入手动。",
+      "remainingRisk": "手动模式无任何机构互锁拦截，D5 在下位时点动 D4 会真的拖过去。硬干涉条件待后续按调试情况逐条补回。",
+      "compiled": true,
+      "downloaded": true,
       "hardwareRetestPerformed": false
+    },
+    "manualHomeRequestCleared": {
+      "date": "2026-10-30",
+      "trigger": "把 D4 移到 70 多之后下发 aManual[4].xHome，轴完全不动。在线读到 uiPhase=0、xHomeReq=FALSE、udiLastID=0、aPending[4].eAction=None、aManual[4].xHome=FALSE、aPrev[4].xHome=FALSE。",
+      "rootCause": "FB_ManualControl 的 xHome 分支开头抄了点动分支的 aPending[i].eAction:=None。点动是电平动作，每扫描重写 aCommand 即可；回零是保持型动作，靠 aPending 锁存请求。清了之后 Home 只存在一个扫描周期：设备在扫描 N 接收并进入相位 60，扫描 N+1 收到 None，5.2 段判 eAction=None AND uiPhase<>0 立刻锁存 xStopLatch、清 uiPhase、发 MC_Stop，MC_Home 的 Execute 只保持了一个周期就中止。",
+      "symptom": "轴完全不动，无任何错误码；udiCounter 会 +1（说明序号分配过），但 udiLastID 又回到 0。",
+      "fix": "删掉 xHome 分支开头的 aPending[i].eAction:=None；把清 aPending 移到「编号不支持」的 ELSE 分支，避免从定位继承的残留请求继续执行。",
+      "notAffected": "FB_Initialize 步骤 25 的回零不受影响，它每扫描重写 aCommand[2]/aCommand[4]，不依赖 aPending。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)；代码大小保持 2011638 字节（删一条赋值、ELSE 分支补一条，净零）",
+      "downloaded": true,
+      "hardwareRetestPerformed": false,
+      "warning": "下载后先确认 aPending[4].eAction 在回零期间保持 Home、uiPhase 保持 60，再判断轴是否动。",
+      "note": "2026-10-30 14:35 在线修改方式下载完成，应用回到 run。下载后核对：eState=Manual（免初始化生效）、xManualArmed=TRUE、xPermit=TRUE、fbRealD4.uiPhase=0、fbRealD4.xHomed=FALSE、fbRealD4.Axis.fActPosition=76.2186（位置保持，未被下载清零），待用户给 xHome 上升沿实测。"
+    },
+    "homingViaMcHoming": {
+      "date": "2026-10-30",
+      "trigger": "修完 aPending 提前清之后，用户给 aManual[4].xHome 上升沿，轴仍然不动、且 fbHome.Busy 一直 TRUE 不退。用户提供轴配置截图：回原方式 =「上位机回零（回原指令：MC_Homing）- 推荐使用」，并说明「这个驱动器不支持驱动器回零」。",
+      "rootCause": "代码发的是 PLCopen 的 MC_Home，它让驱动器按 DS402 0x6098 的回零方式自己找原点。两轴都配成上位机回零，驱动器不实现该模式，收到 Homing 后既不动作也不报错，PLC 侧就一直等 Busy。上位机回零必须用 Inovance 的 MC_Homing，由 PLC 按轴配置逐步走。",
+      "interfaceFacts": {
+        "type": "CmpHCMotion.MC_Homing（带命名空间，必须写全限定名）",
+        "inputs": "只有 Axis（VAR_IN_OUT, AXIS_REF_SM3）与 Execute（BOOL）",
+        "outputs": "Done / Busy / CommandAborted / Error（BOOL）、ErrorID（SMC_ERROR）",
+        "interfaceConfirmedBy": "2026-10-30 15:17 用户在库管理器里打开 MC_Homing 的「输入/输出」页截图确认：Axis(AXIS_REF_SM3)、Execute(BOOL)、Done、Busy、CommandAborted、Error(BOOL)、ErrorID(SMC_ERROR)，与反推结果一致，仅 CommandAborted 之前漏掉，已补回处理。",
+        "noPositionInput": "MC_Homing 没有 Position 入口，回零后的坐标由轴配置的「回零坐标」决定，lrHomePosition 因此不再下发，降级为预留字段。",
+        "noHomingParams": "回零方式、开始方向、原点输入检测方向、零点信号（Z 相）、正负限位模式、快慢速全部在轴配置的「原点参数设置」页，PLC 侧没有参数可调。",
+        "rejectedNames": "实测被拒绝的输入名（不要再用）：HomingMode / Mode / Direction / Velocity / VelocityFast / VelocitySlow / Acceleration / Deceleration / Jerk / HomePosition / Position / Offset / EndSwitch / ReferenceSwitch / ZPulse / SwitchMode / Timeout / BufferMode / nDirection / fVelocityFast / fVelocitySlow / fAcceleration / fDeceleration / fJerk / fHomePosition / xEndSwitch / bReferenceSwitch / MoveMode / ReferenceType / xRoundTripEnable 等 40 余个。",
+        "xRoundTripEnable": "库浏览器里是 MC_Homing 的一个属性（带 Set/Get 方法），不是输入参数，不能写在调用里，否则报「不是 MC_HOMING 的输入」。"
+      },
+      "libraryRequirement": "必须把 CmpHCMotion, 1.1.8.0 (Inovance) 加进**应用**的库管理器。工程文件里原本已有该库的引用记录，但那是设备描述自带的，应用层解析不到，直接写 MC_Homing 会报「没有定义标识符'MC_Homing'」。",
+      "change": "FB_RealAxis 把 fbHome : MC_Home 换成 fbHoming : CmpHCMotion.MC_Homing；调用改为 fbHoming(Axis := Axis, Execute := xHomeReq)；相位 60 的完成判定改读 fbHoming.Done / fbHoming.Error / fbHoming.ErrorID；删掉 fbHome.CommandAborted 分支（MC_Stop 触发时 5.2 段已把 uiPhase 清零，不需要单独处理）。",
+      "notChanged": "FB_Initialize 步骤 25 未改，它只发 E_DeviceAction.Home，具体走哪个 MC 块由 FB_RealAxis 决定，所以初始化里的回零自动跟着换过来了。",
+      "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）；代码大小 2011638 → 2060648 字节（+49 KB 为 CmpHCMotion 库代码），补 CommandAborted 后 2060648 → 2060696 字节，确认两次都是全新构建",
+      "downloaded": true,
+      "hardwareRetestPerformed": false,
+      "versionMarker": "下载后能读到 PLC_PRG.fbMachine.fbDevices.fbRealD4.fbHoming.Busy / .CommandAborted（旧版叫 fbHome），即证明新程序在运行。",
+      "warning": "回零方向、快慢速、原点开关位置仍是轴配置里的调试值，未按机械实际行程标定。首次程序回零前确认原点开关在行程内、回零方向朝安全侧，并把 lrVerifyVelocity 压低。"
     }
   }
 }

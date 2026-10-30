@@ -10,5 +10,6 @@ udiAcceptedID : UDINT; (* 设备已接收的命令序号，用于区别尚未接
 udiCompletedID : UDINT; (* 设备已完成的命令序号；应与本次 udiID 匹配后再切换步骤。 *)
 lrPosition : LREAL; (* 实际或仿真反馈位置；气缸 0/1 的方向见设备编号说明。 *)
 xRealActive : BOOL; (* TRUE 表示该编号当前由真实执行后端接管，不是仿真模型；默认 FALSE。 *)
+xHomed : BOOL; (* 真实轴本次上电后已完成回零；仿真设备恒为 FALSE。回零成功前绝对定位会被拒绝。 *)
 END_STRUCT
 END_TYPE

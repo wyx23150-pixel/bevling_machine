@@ -1,4 +1,4 @@
-(* 模块说明：软件仿真的初始姿态整理流程。接实机前应按机械结构设计真实回原点与初始化动作。 *)
+(* 模块说明：初始姿态整理流程。20 步摆好避让姿态后，25 步让真实轴回零，30 步再按配方绝对定位。 *)
 FUNCTION_BLOCK FB_Initialize
 VAR_INPUT
     xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
@@ -13,7 +13,7 @@ VAR_OUTPUT
     xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
     xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
     udiErrorID : UDINT; (* 非法步骤码 4600；动作超时码=4600+uiStep，可据此定位本支线等待点。 *)
-    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/25/30/40 执行动作，1000 完成；切勿在线强制跳步。 *)
 END_VAR
 VAR
     uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
@@ -44,7 +44,11 @@ aCommand[10] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPos
 aCommand[11] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
 aCommand[12] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
 aCommand[15] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
-IF F_Done(aStatus[5], udiToken) AND F_Done(aStatus[10], udiToken) AND F_Done(aStatus[11], udiToken) AND F_Done(aStatus[12], udiToken) AND F_Done(aStatus[15], udiToken) THEN uiStep := 30; END_IF;
+IF F_Done(aStatus[5], udiToken) AND F_Done(aStatus[10], udiToken) AND F_Done(aStatus[11], udiToken) AND F_Done(aStatus[12], udiToken) AND F_Done(aStatus[15], udiToken) THEN uiStep := 25; END_IF;
+25: (* 初始化 25：真实轴回零。未接真实轴的编号由仿真在 tSimAction 后完成，位置保持不变。 *)
+aCommand[2] := F_Command(E_DeviceAction.Home, udiToken, 0.0, 0.0);
+aCommand[4] := F_Command(E_DeviceAction.Home, udiToken, 0.0, 0.0);
+IF F_Done(aStatus[2], udiToken) AND F_Done(aStatus[4], udiToken) THEN uiStep := 30; END_IF;
 30: (* 仿真初始化 30：D2/D4/D7/D8 移至示例初始坐标，全部完成才继续。 *)
 aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrPositionVelocity);
 aCommand[4] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrLengthPosition, stRecipe.lrPositionVelocity);

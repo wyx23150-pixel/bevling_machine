@@ -49,11 +49,12 @@ VAR
 	xManualArmed : BOOL; (* 本次进入手动后已观察到全部按钮释放；离开手动即清除。 *)
 	eActiveMode : E_MachineMode; (* 当前初始化/运行时采纳的操作模式，用于检测运行中切换模式。 *)
 	xAnyReal : BOOL; (* 是否有任意设备由真实轴接管；全 FALSE 时后续分支与改造前逐语句一致。 *)
+	xAllHomed : BOOL; (* 所有已接管的真实轴都已完成回零；未接真实轴时为 TRUE，用于状态发布。 *)
 	wRealMask : WORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴。 *)
 	wLastRealMask : WORD; (* 上扫描接管掩码；变化时清除初始化并回 Stopped。 *)
 	xLastRelativeVerify : BOOL; (* 上扫描相对验证开关；切换时清除初始化并回 Stopped。 *)
 	uiSafetySource : UINT; (* 安全许可来源：0 仿真源，1 真实源，2 调试旁路。 *)
-	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝，1 有真实设备但未开相对验证。 *)
+	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝；回零已并入初始化流程，当前无拒绝分支，字段预留。 *)
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
 
@@ -135,17 +136,21 @@ END_IF
 IF fbAlarm.udiLatched<>0 THEN stStatus.eState:=E_MachineState.Fault; END_IF
 (* 六、仅停止态接受初始化；配方通过检查后取快照。 *)
 IF rtInitialize.Q AND NOT stCommand.xStop THEN
-    IF (stStatus.eState=E_MachineState.Stopped) AND xSimulation AND xSafetyOK AND F_RecipeValid(stRecipe)
-       AND (NOT xAnyReal OR stReal.xRelativeVerify) THEN
+    (* 真实轴的回零已并入初始化第 25 步，这里不再要求预先打开相对验证。 *)
+    IF (stStatus.eState=E_MachineState.Stopped) AND xSimulation AND xSafetyOK AND F_RecipeValid(stRecipe) THEN
         stActiveRecipe:=stRecipe; stStatus.eState:=E_MachineState.Initializing;
         eActiveMode:=stCommand.eMode; xInitialized:=FALSE; uiInitReject:=0;
     ELSE
-        (* 有真实设备但未开相对验证：绝对定位尚未回零，拒绝初始化但不进故障，否则手动也锁死。 *)
-        IF xAnyReal AND NOT stReal.xRelativeVerify THEN uiInitReject:=1; END_IF
+        (* 当前无拒绝分支：回零并入初始化，uiInitReject 保留字段但不再置位。 *)
         IF xRemoteAccepted THEN stStatus.uiRemoteResult:=3; END_IF
     END_IF
 END_IF
-(* 七、初始化完成后才能启动自动；手动进入后还需全部按钮释放。 *)
+(* 七、手动不依赖初始化：停机态只要模式在手动且没按停止就直接进入，开机后不必先跑初始化。
+   自动仍必须先完成初始化到 Ready；停止按钮按住时留在 Stopped，松开后自动回到手动。 *)
+IF (stStatus.eState=E_MachineState.Stopped) AND (stCommand.eMode=E_MachineMode.Manual)
+   AND NOT stCommand.xStop THEN
+    stStatus.eState:=E_MachineState.Manual; eActiveMode:=E_MachineMode.Manual;
+END_IF
 IF stStatus.eState=E_MachineState.Ready THEN
     IF stCommand.eMode=E_MachineMode.Manual THEN
         stStatus.eState:=E_MachineState.Manual; eActiveMode:=E_MachineMode.Manual;
@@ -168,7 +173,7 @@ IF xStartRequest AND xRemoteAccepted AND (stStatus.eState<>E_MachineState.Automa
 (* 八、手动进入联锁：观察到一次全部按钮释放后，才开放点动/定位操作。 *)
 xManualReleased:=TRUE;
 FOR i:=1 TO 17 DO
-    IF aManual[i].xJogPositive OR aManual[i].xJogNegative OR aManual[i].xMove OR aManual[i].xRun THEN xManualReleased:=FALSE; END_IF
+    IF aManual[i].xJogPositive OR aManual[i].xJogNegative OR aManual[i].xMove OR aManual[i].xRun OR aManual[i].xHome THEN xManualReleased:=FALSE; END_IF
 END_FOR
 IF stStatus.eState<>E_MachineState.Manual THEN xManualArmed:=FALSE;
 ELSIF xManualReleased THEN xManualArmed:=TRUE;
@@ -210,6 +215,11 @@ stStatus.xRelativeVerify:=stReal.xRelativeVerify;
 stStatus.xSafetyBypassed:=xSafetyBypassActive AND xAnyReal;
 stStatus.uiSafetySource:=uiSafetySource; stStatus.uiInitReject:=uiInitReject;
 stStatus.xRemoteStartStopAllowed:=xAllowRemoteStartStop;
+xAllHomed:=TRUE;
+FOR i:=1 TO 17 DO
+    IF stReal.axRealDevice[i] AND NOT aDeviceStatus[i].xHomed THEN xAllHomed:=FALSE; END_IF
+END_FOR
+stStatus.xRealAxesHomed:=xAllHomed;
 stStatus.xInitialized:=xInitialized;
 stStatus.xReady:=xInitialized AND (stStatus.eState=E_MachineState.Ready);
 stStatus.xMaterialAtLength:=xMaterial; stStatus.xCycleComplete:=fbAuto.xDone;

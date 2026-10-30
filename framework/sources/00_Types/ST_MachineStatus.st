@@ -21,7 +21,7 @@ STRUCT
 	uiReturnKnifeStep : UINT; (* 收尾支线 A：10 喷油，20 D2 回刀，1000 完成。 *)
 	uiUnloadStep : UINT; (* 机械手移料支线 B 步骤，10..110 每步加 10，1000 完成；详见 FB_Unload。 *)
 	uiResetLengthStep : UINT; (* 收尾支线 C：10 D4 定位，20 D5 下降，30 确认下降，1000 完成。 *)
-	uiInitializeStep : UINT; (* 初始化步骤：10 整理刀/压/夹爪，20 避让，30 初始定位，40 定长下降，1000 完成。 *)
+	uiInitializeStep : UINT; (* 初始化步骤：10 整理刀/压/夹爪，20 避让，25 真实轴回零，30 初始定位，40 定长下降，1000 完成。 *)
 	uiActiveMaterialModel : UINT; (* 已采纳的运行料型，取自运行配方；可能与尚未生效的参数区不同。 *)
 	wRemoteAckSequence : WORD; (* 整机已处理的上位机命令序号；应结合 uiRemoteResult 判断是否接受。 *)
 	uiRemoteResult : UINT; (* 远程处理结果：0 接受，1 未授权，2 不支持命令，3 状态/本地停止不允许，4 验证模式禁止自动，5 配方不合法。 *)
@@ -30,6 +30,7 @@ STRUCT
 	xSafetyBypassed : BOOL; (* 安全许可是否由两级软件旁路放行；仅调试期可为 TRUE。 *)
 	uiSafetySource : UINT; (* 安全许可来源：0 仿真源，1 真实源，2 调试旁路。 *)
 	wRealDeviceMask : WORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴；供上位机核对。 *)
-	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝，1 有真实设备但未开相对验证。 *)
+	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝；回零已并入初始化流程，当前无拒绝分支，字段预留。 *)
+	xRealAxesHomed : BOOL; (* 所有已接管的真实轴都已完成回零；未接真实轴时为 TRUE。 *)
 END_STRUCT
 END_TYPE

@@ -24,12 +24,14 @@ VAR
 	fbMoveAbs : MC_MoveAbsolute; (* 绝对定位，仅在 xAbsoluteAllowed 为 TRUE 时使用。 *)
 	fbMoveRel : MC_MoveRelative; (* 相对定位，验证模式的两段行程使用。 *)
 	fbMoveVel : MC_MoveVelocity; (* 连续运行与点动共用，两者相位互斥；方向必须显式给出。 *)
+	fbHoming : CmpHCMotion.MC_Homing; (* 上位机回零：由 PLC 自己按轴配置的回零方式走，不依赖驱动器支持 DS402 回零。 *)
 	fbReadPos : MC_ReadActualPosition; (* 实际位置反馈。 *)
 	fbReadStatus : MC_ReadStatus; (* 轴状态，用于判断故障停止。 *)
 	fbReadErr : MC_ReadAxisError; (* 轴错误码，供在线排查。 *)
 	rtReset : R_TRIG; (* 复位上升沿。 *)
 	tonEnable : TON; (* 命令已接收但轴未使能的 3 秒超时。 *)
 	tonDwell : TON; (* 验证往返之间的停留，保证 Execute 拉低形成新上升沿。 *)
+	tonHome : TON; (* 回零超时；找不到原点时按 2004 暴露，避免无限等待。 *)
 	udiLastID : UDINT; (* 上次已接受序号，用于识别新命令。 *)
 	udiActiveID : UDINT; (* 正在执行的序号，完成时回写。 *)
 	xPending : BOOL; (* 已接收但尚未启动，等待轴使能。 *)
@@ -38,7 +40,9 @@ VAR
 	xMoveAbsReq : BOOL; (* 本扫描绝对定位请求。 *)
 	xMoveRelReq : BOOL; (* 本扫描相对定位请求。 *)
 	xMoveVelReq : BOOL; (* 本扫描速度模式请求，连续运行与点动共用。 *)
-	uiPhase : UINT; (* 动作相位：0 空闲、10 等待使能、20 绝对、30/31/32 验证三段、40 连续、50 点动、90 中止。 *)
+	xHomeReq : BOOL; (* 本扫描回零请求，保持到 Done。 *)
+	xHomed : BOOL; (* 本次上电后已成功回零；成功后允许绝对定位，断电或重新下载后清零。 *)
+	uiPhase : UINT; (* 动作相位：0 空闲、10 等待使能、20 绝对、30/31/32 验证三段、40 连续、50 点动、60 回零、90 中止。 *)
 	lrVerifyStart : LREAL; (* 验证正向段起点位置。 *)
 	lrRelDistance : LREAL; (* 本次相对定位距离，正负决定方向。 *)
 	lrRelVelocity : LREAL; (* 本次相对定位速度，取正值。 *)
@@ -73,12 +77,14 @@ END_IF
 (* ===== 3. 定时器：用上扫描状态驱动，避免与状态判定循环依赖 ===== *)
 tonEnable(IN := xPending AND xUseReal, PT := T#3S);
 tonDwell(IN := (uiPhase = 31), PT := stReal.tVerifyDwell);
+tonHome(IN := (uiPhase = 60), PT := stReal.tHomeTimeout);
 
 (* ===== 4. 请求默认全部撤销 ===== *)
 xStopReq := FALSE;
 xMoveAbsReq := FALSE;
 xMoveRelReq := FALSE;
 xMoveVelReq := FALSE;
+xHomeReq := FALSE;
 lrRelDistance := 0.0;
 lrRelVelocity := 0.0;
 lrCmdVelocity := 0.0;
@@ -130,11 +136,12 @@ ELSE
 			xPending := FALSE;
 			CASE stCommand.eAction OF
 			E_DeviceAction.Position:
-				IF stReal.xRelativeVerify THEN
+				(* 已回零优先走绝对定位：相对验证只是未回零时的临时替代，回零成功后不再需要。 *)
+				IF xHomed OR stConfig.xAbsoluteAllowed THEN
+					uiPhase := 20;
+				ELSIF stReal.xRelativeVerify THEN
 					lrVerifyStart := fbReadPos.Position;
 					uiPhase := 30; uiVerifyPhase := 1;
-				ELSIF stConfig.xAbsoluteAllowed THEN
-					uiPhase := 20;
 				ELSE
 					(* 未回零不允许绝对定位：报 2002 且不置完成位，由上层按步号超时暴露。 *)
 					stStatus.xError := TRUE; stStatus.udiErrorID := 2002;
@@ -144,6 +151,8 @@ ELSE
 				uiPhase := 40;
 			E_DeviceAction.Jog:
 				uiPhase := 50;
+			E_DeviceAction.Home:
+				uiPhase := 60;
 			ELSE
 				uiPhase := 0;
 			END_CASE
@@ -175,6 +184,7 @@ ELSE
 	xMoveAbsReq := (uiPhase = 20);
 	xMoveRelReq := (uiPhase = 30) OR (uiPhase = 32);
 	xMoveVelReq := (uiPhase = 40) OR (uiPhase = 50);
+	xHomeReq := (uiPhase = 60);
 END_IF
 
 (* ===== 6. MC 块无条件调用：漏调用会报 SMC_FB_WASNT_CALLED_DURING_MOTION ===== *)
@@ -193,6 +203,9 @@ fbMoveVel(Axis := Axis, Execute := xMoveVelReq,
 	Direction := SEL(lrCmdVelocity < 0.0, MC_Direction.positive, MC_Direction.negative),
 	Acceleration := stConfig.lrMaxAcceleration,
 	Deceleration := stConfig.lrMaxDeceleration);
+(* 回零走 MC_Homing（上位机回零）：回零方式、开始方向、零点信号、快慢速全部来自轴配置，
+   本块只给 Axis 和 Execute。驱动器不支持 DS402 回零，用 MC_Home 会一直卡在 Homing 状态不动。 *)
+fbHoming(Axis := Axis, Execute := xHomeReq);
 
 (* ===== 7. 完成判定与序号回写 ===== *)
 IF xUseReal THEN
@@ -242,6 +255,21 @@ IF xUseReal THEN
 		(* 点动：与仿真一致，不置完成位，靠松开后的 None/Stop 停止。 *)
 		stStatus.xActive := fbMoveVel.InVelocity;
 		stStatus.xBusy := TRUE;
+	60:
+		(* 回零：Done 后置 xHomed 并放行绝对定位；超时报 2004 且不置完成位，避免上层误判已到位。 *)
+		IF fbHoming.Done THEN
+			xHomed := TRUE;
+			stStatus.udiCompletedID := udiActiveID;
+			stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+			uiPhase := 0;
+		ELSIF fbHoming.CommandAborted THEN
+			(* 被其它运动块打断：只清忙标志退出相位，既不置完成位也不置故障，由上层按步号超时暴露。 *)
+			stStatus.xBusy := FALSE; uiPhase := 0;
+		ELSIF tonHome.Q THEN
+			xHomed := FALSE;
+			stStatus.xError := TRUE; stStatus.udiErrorID := 2004;
+			stStatus.xBusy := FALSE; uiPhase := 0;
+		END_IF
 	END_CASE
 
 	(* --- MC 错误汇总：只锁存第一条，40000 为前缀，低 16 位保留原码便于查手册 --- *)
@@ -258,12 +286,15 @@ IF xUseReal THEN
 			stStatus.xError := TRUE; stStatus.udiErrorID := UDINT#40000 + TO_UDINT(fbMoveAbs.ErrorID);
 		ELSIF fbMoveVel.Error THEN
 			stStatus.xError := TRUE; stStatus.udiErrorID := UDINT#40000 + TO_UDINT(fbMoveVel.ErrorID);
+		ELSIF fbHoming.Error THEN
+			stStatus.xError := TRUE; stStatus.udiErrorID := UDINT#40000 + TO_UDINT(fbHoming.ErrorID);
 		END_IF
 	END_IF
 END_IF
 
 (* ===== 8. 就绪与故障收尾 ===== *)
 stStatus.xReady := xUseReal AND xEnable AND NOT stStatus.xError;
+stStatus.xHomed := xUseReal AND xHomed;
 IF stStatus.xError THEN
 	stStatus.xBusy := FALSE;
 	stStatus.xActive := FALSE;
