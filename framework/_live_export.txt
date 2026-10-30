@@ -1,0 +1,2051 @@
+===== Device/Plc Logic/Application/00_Types/ST_DeviceConfig
+--- DECL
+(* 模块说明：设备类型、行程范围和仿真参数。当前工程单位与时间均为仿真示例，尚未完成实机标定。 *)
+TYPE ST_DeviceConfig :
+STRUCT
+eKind : E_DeviceKind; (* 设备类型，决定调用哪一种设备适配功能块。 *)
+lrInitialPosition : LREAL; (* 首次进入仿真时的初始位置，不是实机回原点结果。 *)
+lrMinPosition : LREAL := -1000.0; (* 示例软行程下限，单位随机构定义。 *)
+lrMaxPosition : LREAL := 1000.0; (* 示例软行程上限，单位随机构定义。 *)
+lrMaxVelocity : LREAL := 100.0; (* 允许请求的最大速度，用于仿真命令范围检查。 *)
+tSimAction : TIME := T#500MS; (* 仿真单次定位/建立运行状态所需时间，不代表实际机械动作时间。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_DeviceStatus
+--- DECL
+(* 模块说明：单个设备的执行反馈。收到命令与完成命令是两个状态，不能只看忙标志判断完成。 *)
+TYPE ST_DeviceStatus :
+STRUCT
+xReady : BOOL; (* 设备已使能且无故障，允许接收命令； *)
+xBusy : BOOL; (* 当前动作正在执行，定位完成或停止后清除。 *)
+xActive : BOOL; (* 连续运行已建立或点动正在进行； *)
+xError : BOOL; (* 本设备或本子流程发生故障； *)
+udiErrorID : UDINT; (* 错误码；0 表示无错误，设备或流程发生异常时赋值。 *)
+udiAcceptedID : UDINT; (* 设备已接收的命令序号， *)
+udiCompletedID : UDINT; (* 设备已完成的命令序号； *)
+lrPosition : LREAL; (* 实际或仿真反馈位置； *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/E_AutoStep
+--- DECL
+(* 模块说明：自动主流程步骤。正常循环从送料等料开始，切割完成后执行三路收尾。 *)
+{attribute 'qualified_only'}
+TYPE E_AutoStep :
+(
+    Idle := 0, (* 主流程待机 *)
+    FeedWait := 10, (* 正常送料等料，可长期等待 *)
+    StopFeed := 20, (* 撤销皮带运行并等待停止 *)
+    Push := 30, (* G3 推动气缸动作 *)
+    Clearance := 40, (* 并行避让 P/Q，全完成后继续 *)
+    Rotate := 50, (* D8 平台旋转到配方角度 *)
+    PressDown := 60, (* G1 下压到位 *)
+    KnifeDown := 70, (* G9 盘刀下降到位 *)
+    SpindleOn := 80, (* D3 盘刀运行状态建立 *)
+    Cutting := 90, (* D2 走刀和 G6 吹气，等待指定行程到位 *)
+    StopCut := 100, (* 停止盘刀和吹气 *)
+    PostCut := 110, (* 抬刀、抬压、并行三路收尾 *)
+    Complete := 120, (* 整循环完成，连续模式回送料 *)
+    Fault := 900 (* 自动流程错误，退出执行后复位 *)
+);
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_ManualCommand
+--- DECL
+(* 模块说明：手动按钮接口。点动和运行按住有效，定位使用上升沿；手动请求同样经过互锁。 *)
+TYPE ST_ManualCommand :
+STRUCT
+xJogPositive : BOOL; (* 手动正向点动，按住有效，释放后取消；只支持定位轴。 *)
+xJogNegative : BOOL; (* 手动反向点动，按住有效；与正向同时按下会被拒绝。 *)
+xMove : BOOL; (* 手动定位按钮，上升沿锁存目标，动作保持到本次序号完成。 *)
+xRun : BOOL; (* 手动连续运行按钮，按住有效、松开停止，仅支持 D1/D3/G5/G6。 *)
+lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连续运行和点动不使用该位置。 *)
+lrVelocity : LREAL := 10.0; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_SimulationSettings
+--- DECL
+(* 模块说明：软件仿真输入和异常注入。设备索引为 1..17，与 GVL_DeviceIds 一致。 *)
+TYPE ST_SimulationSettings :
+STRUCT
+xSafetyOK : BOOL := TRUE; (* 安全许可接口或仿真许可，TRUE 允许；不等同于安全级急停回路。 *)
+xAutoMaterial : BOOL := TRUE; (* TRUE 由仿真模型自动产生到位；FALSE 使用人工料到位输入。 *)
+xMaterialSensor : BOOL; (* 手动模拟的光电到位信号，仅在 xAutoMaterial=FALSE 时使用。 *)
+tMaterialDelay : TIME := T#1S; (* 满足皮带运行及定长下降条件后，仿真来料的延时时间。 *)
+axStall : ARRAY[1..17] OF BOOL; (* 设备卡住注入，索引 1..17；保持忙且不完成，用于观察等待/超时。 *)
+axFault : ARRAY[1..17] OF BOOL; (* 设备故障注入，索引 1..17；先清除注入，再执行报警复位。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_Recipe
+--- DECL
+(* 模块说明：加工配方。初始化和自动启动时校验并复制到运行配方，避免运行中参数变化影响当前工序。 *)
+TYPE ST_Recipe :
+STRUCT
+uiMaterialModel : UINT := 300; (* 料型选择，仅支持 300/400/600，对应 G2 三个继电器；不是位移。 *)
+lrCutHome : LREAL := 0.0; (* D2 回刀起点；切割终点为该位置加 lrCutLength。 *)
+lrCutLength : LREAL := 20.0; (* D2 本次切割行程，示例默认 20；到达指定终点才结束切割。 *)
+lrCutVelocity : LREAL := 10.0; (* D2 切割进给速度；示例参数，接实机前确认工程单位。 *)
+lrPositionVelocity : LREAL := 10.0; (* 其余定位动作的公共请求速度，当前为仿真示例。 *)
+lrBeltVelocity : LREAL := 10.0; (* D1 皮带运行速度请求，当前未换算到实际驱动器单位。 *)
+lrSpindleVelocity : LREAL := 10.0; (* D3 盘刀运行速度请求，当前不是已标定的实际转速。 *)
+lrLengthPosition : LREAL := 100.0; (* D4 定长检测工作位置；到位后再令 D5 下降。 *)
+lrLengthClear : LREAL := 0.0; (* D4 切割前避让位置；移动前须 D5 升起。 *)
+lrRotateAngle : LREAL := 0.0; (* D8 平台旋转目标角度，示例范围为正负 360，实机角度单位待标定。 *)
+lrGripperFront : LREAL := 100.0; (* D7 机械手前进取料位置。 *)
+lrGripperPull : LREAL := 200.0; (* D7 夹紧后拉料目标位置。 *)
+lrGripperBack : LREAL := 50.0; (* D7 松开后的抬升后退位置；到位后先下降，再最终回位。 *)
+lrGripperHome : LREAL := 0.0; (* D7 机械手下降后最终回位的位置。 *)
+tSpray : TIME := T#300MS; (* 收尾支线 A 的喷油保持时间；该步结束后撤销喷油请求。 *)
+tStepTimeout : TIME := T#30S; (* 单动作步骤超时时间；正常送料等料阶段不套用此超时。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_DeviceCommand
+--- DECL
+(* 模块说明：上层发给单个设备的请求。定位每次换新序号；连续运行和点动期间保持请求。 *)
+TYPE ST_DeviceCommand :
+STRUCT
+eAction : E_DeviceAction; (* 动作类型：无请求、定位、连续运行、点动或停止，见 E_DeviceAction。 *)
+udiID : UDINT; (* 本次命令序号，0 无效；发起新定位时换新序号。 *)
+lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连续运行和点动不使用该位置。 *)
+lrVelocity : LREAL; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/E_DeviceAction
+--- DECL
+(* 模块说明：统一设备动作类型。未请求或停止时取消动作；定位完成依据本次命令序号判断。 *)
+{attribute 'qualified_only'}
+TYPE E_DeviceAction :
+(
+    None := 0, (* 无动作请求，取消当前动作 *)
+    Position := 1, (* 定位到指定目标，等待本次序号完成 *)
+    Run := 2, (* 保持连续运行请求 *)
+    Jog := 3, (* 保持点动，速度正负决定方向 *)
+    Stop := 4 (* 取消动作，停止运行 *)
+);
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_RemoteCommand
+--- DECL
+(* 模块说明：上位机可选启停请求，不含模式、初始化、复位或连续选择字段。参数通过独立配方接口下发。 *)
+TYPE ST_RemoteCommand :
+STRUCT
+xStart : BOOL; (* 自动启动请求，上升沿有效；须先初始化到 Ready。 *)
+xStop : BOOL; (* 普通停止，TRUE 持续有效；取消动作并清除初始化，不能替代硬件急停。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/E_MachineState
+--- DECL
+(* 模块说明：整机运行状态。停止或报警复位后须重新初始化，启动命令不会跳过初始化。 *)
+{attribute 'qualified_only'}
+TYPE E_MachineState :
+(
+    Stopped := 0, (* 停止，须初始化 *)
+    Initializing := 10, (* 初始化中 *)
+    Ready := 20, (* 初始化完成，等待自动启动 *)
+    Manual := 30, (* 手动控制中 *)
+    Automatic := 40, (* 自动工序运行中，包含正常等料 *)
+    Fault := 90 (* 报警锁存，清除原因后复位 *)
+);
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_OperatorCommand
+--- DECL
+(* 模块说明：由本地实体面板解码形成的整机命令。模式取自旋钮，初始化/启动/复位取按钮，停止为电平有效。 *)
+TYPE ST_OperatorCommand :
+STRUCT
+eMode : E_MachineMode := E_MachineMode.Manual; (* 本地模式旋钮的当前选择：Manual 手动，Automatic 自动；上位机仅可读取。 *)
+xInitialize : BOOL; (* 初始化请求，上升沿有效；只允许从停止且许可满足时进入。 *)
+xStart : BOOL; (* 自动启动请求，上升沿有效；须先初始化到 Ready。 *)
+xStop : BOOL; (* 普通停止，TRUE 持续有效；取消动作并清除初始化，不能替代硬件急停。 *)
+xResetAlarm : BOOL; (* 报警复位请求，上升沿有效；原因清除后复位，不会自动重新启动。 *)
+xContinuous : BOOL; (* TRUE 连续循环；FALSE 在当前完整循环结束后回到就绪。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/E_MachineMode
+--- DECL
+(* 模块说明：操作模式。手动与自动分别提出动作请求，共用设备执行和互锁。 *)
+{attribute 'qualified_only'}
+TYPE E_MachineMode :
+(
+    Manual := 0, (* 手动点动/单机构调试 *)
+    Automatic := 1 (* 自动循环工序 *)
+);
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_MachineStatus
+--- DECL
+(* 模块说明：提供给监控和上位机的整机状态。可从主步骤、支线步骤、报警和互锁阻挡编号定位等待原因。 *)
+TYPE ST_MachineStatus :
+STRUCT
+eState : E_MachineState; (* 整机状态，见 E_MachineState；调试时先确认是否已初始化及处于正确模式。 *)
+eMode : E_MachineMode; (* 本地模式旋钮的当前选择：Manual 手动，Automatic 自动；上位机仅可读取。 *)
+eAutoStep : E_AutoStep; (* 自动主流程步骤；送料、避让、切割、收尾等状态见 E_AutoStep。 *)
+xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+xRealBackendAvailable : BOOL; (* 真实设备适配是否已具备；当前框架固定 FALSE。 *)
+xRemoteStartStopAllowed : BOOL; (* 当前是否允许上位机启停，供只读状态发布；与物理手动/自动模式独立。 *)
+xInitialized : BOOL; (* 初始化完成标志；停止、运行中切换模式或故障会清除。 *)
+xReady : BOOL; (* 整机已经初始化并处于 Ready 状态，可接受自动启动；手动状态下不置该位。 *)
+xMaterialAtLength : BOOL; (* 定长光电到位状态；自动送料须先离开再到位，并满足 D5 下降。 *)
+xCycleComplete : BOOL; (* 一个扫描周期的整循环完成脉冲，可用于计数或上位机提示。 *)
+udiCycleCount : UDINT; (* 已完成的自动整循环计数；包括机械手移料等三路收尾。 *)
+udiAlarm : UDINT; (* 整机锁存报警码；0 无报警，1001 安全许可，3001 实机未接入，10000+索引为设备故障。 *)
+uiBlockedDevice : UINT; (* 本扫描最后一个被互锁阻挡的设备索引；0 表示无阻挡，可结合设备状态排查。 *)
+uiManualReject : UINT; (* 本扫描最后一个被拒绝的手动设备索引；0 无拒绝，检查相反按钮或动作类型。 *)
+uiClearLengthStep : UINT; (* 避让支线 P 的当前步骤：10 升起 D5，20 移开 D4，1000 完成。 *)
+uiClearTransferStep : UINT; (* 避让支线 Q 当前步骤：10 降 G4，20 松 G3，30 降 G2，1000 完成。 *)
+uiPostStep : UINT; (* 收尾总步骤：10 抬刀，20 抬压，30 等待三路完成，1000 结束。 *)
+uiReturnKnifeStep : UINT; (* 收尾支线 A：10 喷油，20 D2 回刀，1000 完成。 *)
+uiUnloadStep : UINT; (* 机械手移料支线 B 步骤，10..110 每步加 10，1000 完成；详见 FB_Unload。 *)
+uiResetLengthStep : UINT; (* 收尾支线 C：10 D4 定位，20 D5 下降，30 确认下降，1000 完成。 *)
+uiInitializeStep : UINT; (* 初始化步骤：10 整理刀/压/夹爪，20 避让，30 初始定位，40 定长下降，1000 完成。 *)
+uiActiveMaterialModel : UINT; (* 已采纳的运行料型，取自运行配方；可能与尚未生效的参数区不同。 *)
+wRemoteAckSequence : WORD; (* 整机已处理的上位机命令序号；应结合 uiRemoteResult 判断是否接受。 *)
+uiRemoteResult : UINT; (* 远程处理结果：0 接受，1 未授权，2 不支持命令，3 状态/本地停止不允许，5 配方不合法。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/ST_PanelInputs
+--- DECL
+(* 模块说明：实体旋钮与按钮的逻辑输入；映射层先处理常开/常闭和极性，不在此处指定物理地址。仿真使用相同格式。 *)
+TYPE ST_PanelInputs :
+STRUCT
+xAutoMode : BOOL; (* 模式旋钮的标准化逻辑值：TRUE 自动，FALSE 手动；不是上位机设定值。 *)
+xInitialize : BOOL; (* 初始化请求，上升沿有效；只允许从停止且许可满足时进入。 *)
+xStart : BOOL; (* 自动启动请求，上升沿有效；须先初始化到 Ready。 *)
+xStop : BOOL; (* 普通停止，TRUE 持续有效；取消动作并清除初始化，不能替代硬件急停。 *)
+xResetAlarm : BOOL; (* 报警复位请求，上升沿有效；原因清除后复位，不会自动重新启动。 *)
+END_STRUCT
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/00_Types/E_DeviceKind
+--- DECL
+(* 模块说明：设备适配类型，由设备管理器选择轴、电机、气缸或阀的执行入口。 *)
+{attribute 'qualified_only'}
+TYPE E_DeviceKind :
+(
+    Unused := 0, (* 保留，不调度 *)
+    Axis := 1, (* 定位轴 *)
+    Motor := 2, (* 连续电机 *)
+    Cylinder := 3, (* 两端动作气缸 *)
+    Valve := 4 (* 开关阀 *)
+);
+END_TYPE
+
+--- IMPL
+
+===== Device/Plc Logic/Application/06_Simulation/FB_SimDevice
+--- DECL
+(* 模块说明：设备仿真模型：定位按固定时间插值、连续运行保持状态、点动按时间增量累计位置。 *)
+FUNCTION_BLOCK FB_SimDevice
+VAR_INPUT
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    xStall : BOOL; (* 仿真卡住输入；TRUE 暂停位置推进且不发完成，保留忙状态。 *)
+    xInjectFault : BOOL; (* 仿真设备故障输入；TRUE 锁存错误码 9001。 *)
+    stConfig : ST_DeviceConfig; (* 设备类型、初始位置、软限位与仿真动作时间。 *)
+    stCommand : ST_DeviceCommand; (* 当前单设备命令，含动作类型、序号、目标和速度。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+END_VAR
+VAR
+    xBooted : BOOL; (* 本功能块首次初始化完成标志，防止每扫描重写初值。 *)
+    xAction : BOOL; (* 仿真定时动作进行中；定位和建立连续运行状态使用，点动另行处理。 *)
+    udiLastID : UDINT; (* 上次已接受序号，同一序号保持期间不重复启动动作。 *)
+    lrStart : LREAL; (* 本次仿真定位的起始位置，用于按时间插值。 *)
+    lrTarget : LREAL; (* 本次已接受定位命令的目标位置快照，用于时间插值。 *)
+    lrJogDelta : LREAL; (* 点动相邻扫描的时间差，单位秒；速度乘该值取得本扫描位移。 *)
+    tLastJog : TIME; (* 上扫描点动计时值，用于计算本扫描时间增量。 *)
+    tonAction : TON; (* 仿真定位或建立连续运行状态的定时器。 *)
+    tonJog : TON; (* 点动累计计时器，用于计算位置增量，设定计时上限 24 小时。 *)
+END_VAR
+
+--- IMPL
+(* 首次读取初始位置；以后位置由仿真动作累计，不在每周期重新归零。 *)
+IF NOT xBooted THEN
+    stStatus.lrPosition := stConfig.lrInitialPosition;
+    xBooted := TRUE;
+END_IF
+IF xReset AND NOT xInjectFault THEN
+    stStatus.xError := FALSE; stStatus.udiErrorID := 0;
+END_IF
+IF xInjectFault THEN 
+	stStatus.xError := TRUE;
+	stStatus.udiErrorID := 9001;
+END_IF
+stStatus.xReady := xEnable AND NOT stStatus.xError AND (stConfig.eKind <> E_DeviceKind.Unused);
+
+(* 无许可、无请求或明确 Stop 时取消当前动作并清接收/完成序号。 *)
+IF NOT stStatus.xReady OR (stCommand.eAction = E_DeviceAction.None)
+   OR (stCommand.eAction = E_DeviceAction.Stop) THEN
+    xAction := FALSE; udiLastID := 0;
+    stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+    stStatus.udiAcceptedID := 0; stStatus.udiCompletedID := 0;
+(* 只接收不同于上次的非零序号；接收时检查速度与目标行程范围。 *)
+ELSIF (stCommand.udiID <> 0) AND (stCommand.udiID <> udiLastID) THEN
+    udiLastID := stCommand.udiID;
+    stStatus.udiAcceptedID := udiLastID; stStatus.udiCompletedID := 0;
+    lrStart := stStatus.lrPosition; lrTarget := stCommand.lrTarget;
+    IF (ABS(stCommand.lrVelocity) > stConfig.lrMaxVelocity)
+       OR ((stCommand.eAction = E_DeviceAction.Position) AND
+           ((lrTarget < stConfig.lrMinPosition) OR (lrTarget > stConfig.lrMaxPosition))) THEN
+        stStatus.xError := TRUE; stStatus.udiErrorID := 2001; xAction := FALSE;
+    ELSE
+        xAction := stCommand.eAction <> E_DeviceAction.Jog;
+        stStatus.xBusy := TRUE; stStatus.xActive := FALSE;
+    END_IF
+    (* 接收新序号时先复位计时器，随后由每扫描调用开始本次计时。 *)
+    tonAction(IN := FALSE);
+END_IF
+(* 固定时间仿真定位，不依据实际速度/加速度建模；卡住注入时保持忙且不完成。 *)
+tonAction(IN := xAction AND stStatus.xReady, PT := stConfig.tSimAction);
+IF xAction AND NOT xStall AND stStatus.xReady THEN
+    IF stCommand.eAction = E_DeviceAction.Position THEN
+        stStatus.lrPosition := lrStart + (lrTarget-lrStart) *
+            MIN(1.0, TIME_TO_LREAL(tonAction.ET) / MAX(1.0, TIME_TO_LREAL(stConfig.tSimAction)));
+    END_IF
+    IF tonAction.Q THEN
+        IF stCommand.eAction = E_DeviceAction.Position THEN stStatus.lrPosition := lrTarget; END_IF
+        stStatus.xBusy := FALSE;
+        stStatus.xActive := stCommand.eAction = E_DeviceAction.Run;
+        stStatus.udiCompletedID := udiLastID;
+        xAction := FALSE;
+    END_IF
+END_IF
+(* 点动按相邻扫描的时间差累计位置，达到示例软行程边界后限幅。 *)
+tonJog(IN := stStatus.xReady AND (stCommand.eAction = E_DeviceAction.Jog), PT := T#24H);
+IF tonJog.IN THEN
+    lrJogDelta := TIME_TO_LREAL(tonJog.ET-tLastJog) / 1000.0;
+    IF NOT xStall THEN
+        stStatus.lrPosition := LIMIT(stConfig.lrMinPosition,
+            stStatus.lrPosition+stCommand.lrVelocity*lrJogDelta, stConfig.lrMaxPosition);
+    END_IF
+    stStatus.xBusy := TRUE; stStatus.xActive := TRUE;
+    tLastJog := tonJog.ET;
+ELSE tLastJog := T#0MS;
+END_IF
+IF stStatus.xError THEN
+    stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+END_IF
+
+===== Device/Plc Logic/Application/06_Simulation/FB_SimPlant
+--- DECL
+(* 模块说明：仿真来料模型。皮带运行且定长下降时延时产生一次到位，定长升起或关闭模型后清除。 *)
+FUNCTION_BLOCK FB_SimPlant
+VAR_INPUT
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    stSettings : ST_SimulationSettings; (* 软件仿真参数，含来料方式和异常注入。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+END_VAR
+VAR_OUTPUT
+    xMaterialAtLength : BOOL; (* 定长光电到位状态；自动送料须先离开再到位，并满足 D5 下降。 *)
+END_VAR
+VAR
+    xLatched : BOOL; (* 本轮仿真料到位保持标志；定长升起或模型失能时清除。 *)
+    tonMaterial : TON; (* 自动仿真来料延时，仅在运行皮带且定长下降到位时计时。 *)
+END_VAR
+
+--- IMPL
+(* 定长抬起时清除上次来料；自动方式形成一次延时到位，手动方式直接采用人工传感器。 *)
+IF NOT xEnable OR NOT F_At(aStatus[5],1.0) THEN xLatched:=FALSE; END_IF
+tonMaterial(IN:=xEnable AND stSettings.xAutoMaterial AND aStatus[1].xActive
+    AND F_At(aStatus[5],1.0) AND NOT xLatched,PT:=stSettings.tMaterialDelay);
+IF tonMaterial.Q THEN xLatched:=TRUE; END_IF
+IF stSettings.xAutoMaterial THEN xMaterialAtLength:=xLatched;
+ELSE xMaterialAtLength:=xEnable AND F_At(aStatus[5],1.0) AND stSettings.xMaterialSensor;
+END_IF
+
+===== Device/Plc Logic/Application/90_Legacy/PRG_AxisDemo
+--- DECL
+(* 模块说明：保留的旧单轴低速往返 Demo，当前未周期调用。它不属于新切割机自动工序。 *)
+PROGRAM PRG_AxisDemo
+VAR
+    (* 运动控制功能块：伺服使能、复位、停止及位置反馈。 *)
+    fbPower    : MC_Power; (* 旧 Demo 伺服使能功能块，操作对象为 Axis_1。 *)
+    fbReset    : MC_Reset; (* 旧 Demo 轴故障复位功能块。 *)
+    fbStop     : MC_Stop; (* 旧 Demo 受控停止功能块，完成后释放停止锁定。 *)
+    fbJog      : MC_Jog; (* 保留的点动实例，当前 Demo 正文未调用。 *)
+    fbMoveRel  : MC_MoveRelative; (* 保留的相对定位实例，当前正文使用 fbCycle 执行往返。 *)
+    fbMoveAbs  : MC_MoveAbsolute; (* 保留的绝对定位实例，当前 Demo 正文未调用。 *)
+    fbCycle    : MC_MoveRelative; (* 实际执行单次往返的相对定位实例，每段使用独立 Execute 触发。 *)
+    fbReadPos  : MC_ReadActualPosition; (* 读取 Axis_1 实际位置，写入旧监控变量 rActPos。 *)
+    fbReadStat : MC_ReadStatus; (* 保留的轴状态读取实例，当前正文未调用。 *)
+    fbReadErr  : MC_ReadAxisError; (* 保留的轴错误读取实例，当前正文未调用。 *)
+
+    (* 启动信号上升沿检测 *)
+    rtCycle    : R_TRIG; (* 旧 Demo 启动按钮上升沿检测，按住按钮不会重复往返。 *)
+
+    (* 自动测试循环的内部状态 *)
+    fbCycleExec: BOOL; (* 往返定位功能块 Execute 请求，换向前清除后再置位。 *)
+    rCycleDist : LREAL; (* 本段相对位移，正向为正、回程为负，单段绝对值限 20 mm。 *)
+    iCycle     : INT := 0; (* 旧 Demo 步骤：0 待机，10 正向，20 停留，30 回程，40 停留结束，99 故障。 *)
+    tonDwell   : TON; (* 正向与回程到位后的停留计时器。 *)
+
+    (* 运行状态与故障诊断 *)
+    eLastErr   : SMC_ERROR; (* 历史保留的错误变量，当前正文未更新，请看轴/功能块实际错误输出。 *)
+	xDoReset: BOOL; (* 历史测试保留变量，当前正文未引用。 *)
+	xStopRun: BOOL; (* 旧 Demo 停止请求锁存，收到停止或运动错误后置位。 *)
+	rRunDec: LREAL; (* 历史测试保留减速度变量，当前正文未引用。 *)
+	xStartRun: BOOL; (* 历史测试保留启动变量，当前正文未引用。 *)
+	iStep: INT; (* 历史测试保留步骤变量，当前有效步骤为 iCycle。 *)
+	fbMoveVel: MC_MoveVelocity; (* 历史速度运动实例，当前正文未调用。 *)
+	Axis: INT; (* 历史保留 INT 变量，不是 Axis_1 运动轴对象，当前正文未引用。 *)
+	Execute: BOOL; (* 历史测试保留执行变量，当前正文未引用。 *)
+	rRunVel: LREAL; (* 历史测试保留速度变量，当前正文未引用。 *)
+	rRunAcc: LREAL; (* 历史测试保留加速度变量，当前正文未引用。 *)
+	Velocity: INT; (* 历史测试保留 INT 变量，当前正文未引用。 *)
+	Acceleration: INT; (* 历史测试保留 INT 变量，当前正文未引用。 *)
+	Deceleration: INT; (* 历史测试保留 INT 变量，当前正文未引用。 *)
+	Direction: INT; (* 历史测试保留方向变量，当前正文未引用。 *)
+	InVelocity: INT; (* 历史测试保留 INT 变量，当前正文未引用。 *)
+	xMoveExec: BOOL; (* 历史测试保留执行变量，当前正文未引用。 *)
+END_VAR
+
+--- IMPL
+(* 中文注释显示核对：单次低速 20 mm 往返测试。
+   GVL_Motion.xStartCycle 的上升沿启动一次循环。
+   单程距离最多 20 mm，速度最多 10 mm/s。 *)
+rtCycle(CLK := GVL_Motion.xStartCycle);
+
+fbPower(Axis         := Axis_1,
+        Enable       := GVL_Motion.xEnable,
+        bRegulatorOn := TRUE,
+        bDriveStart  := TRUE);
+
+fbReset(Axis := Axis_1, Execute := GVL_Motion.xReset);
+
+IF GVL_Motion.xStop THEN
+    xStopRun   := TRUE;
+    fbCycleExec := FALSE;
+    iCycle      := 0;
+END_IF
+
+IF fbPower.Error OR fbCycle.Error OR fbReset.Error OR fbStop.Error THEN
+    iCycle      := 99;
+    fbCycleExec := FALSE;
+    xStopRun    := TRUE;
+END_IF
+
+fbStop(Axis         := Axis_1,
+       Execute      := xStopRun,
+       Deceleration := MIN(MAX(GVL_Motion.rDec, 10.0), 200.0));
+
+IF xStopRun AND fbStop.Done THEN
+    xStopRun := FALSE;
+END_IF
+
+tonDwell(IN := (iCycle = 20) OR (iCycle = 40),
+         PT := GVL_Motion.tDwell);
+
+CASE iCycle OF
+    0:  (* 等待启动：一次上升沿触发一次完整往返。 *)
+        fbCycleExec := FALSE;
+        IF rtCycle.Q
+           AND GVL_Motion.xEnable
+           AND fbPower.Status
+           AND NOT GVL_Motion.xAxisError
+           AND NOT xStopRun
+           AND (ABS(GVL_Motion.rStroke) > 0.0) THEN
+            rCycleDist := MIN(ABS(GVL_Motion.rStroke), 20.0);
+            fbCycleExec := TRUE;
+            iCycle := 10;
+        END_IF
+
+    10: (* 正向运动：等待轴到达指定位置。 *)
+        IF fbCycle.Done THEN
+            fbCycleExec := FALSE;
+            iCycle := 20;
+        ELSIF fbCycle.Error THEN
+            fbCycleExec := FALSE;
+            iCycle := 99;
+            xStopRun := TRUE;
+        END_IF
+
+    20: (* 正向到位后停留，再发出反向运动指令。 *)
+        IF tonDwell.Q AND NOT xStopRun THEN
+            rCycleDist := -MIN(ABS(GVL_Motion.rStroke), 20.0);
+            fbCycleExec := TRUE;
+            iCycle := 30;
+        END_IF
+
+    30: (* 反向返回：等待轴完成回程。 *)
+        IF fbCycle.Done THEN
+            fbCycleExec := FALSE;
+            iCycle := 40;
+        ELSIF fbCycle.Error THEN
+            fbCycleExec := FALSE;
+            iCycle := 99;
+            xStopRun := TRUE;
+        END_IF
+
+    40: (* 返回起点后停留，本次循环结束。 *)
+        IF tonDwell.Q THEN
+            iCycle := 0;
+        END_IF
+
+    99: (* 故障保持：复位成功且停止完成后，允许回到待机。 *)
+        fbCycleExec := FALSE;
+        IF GVL_Motion.xReset AND fbReset.Done AND NOT xStopRun THEN
+            iCycle := 0;
+        END_IF
+
+ELSE
+    iCycle := 99;
+    fbCycleExec := FALSE;
+    xStopRun := TRUE;
+END_CASE
+
+fbCycle(Axis         := Axis_1,
+        Execute      := fbCycleExec AND NOT xStopRun,
+        Distance     := rCycleDist,
+        Velocity     := MIN(MAX(GVL_Motion.rVel, 1.0), 10.0),
+        Acceleration := MIN(MAX(GVL_Motion.rAcc, 10.0), 200.0),
+        Deceleration := MIN(MAX(GVL_Motion.rDec, 10.0), 200.0));
+
+fbReadPos(Axis := Axis_1, Enable := TRUE);
+
+GVL_Motion.xPowered    := fbPower.Status;
+GVL_Motion.xBusy       := fbCycle.Busy OR fbStop.Busy;
+GVL_Motion.xDisabled   := NOT fbPower.Status;
+GVL_Motion.xStopping   := fbStop.Busy;
+GVL_Motion.xStandStill := fbPower.Status AND NOT GVL_Motion.xBusy;
+GVL_Motion.xAxisReady  := GVL_Motion.xStandStill AND NOT GVL_Motion.xAxisError;
+GVL_Motion.xAxisError  := fbPower.Error OR fbCycle.Error OR fbReset.Error OR fbStop.Error;
+GVL_Motion.xErrorStop  := GVL_Motion.xAxisError;
+GVL_Motion.iState      := iCycle;
+GVL_Motion.rActPos     := fbReadPos.Position;
+
+===== Device/Plc Logic/Application/02_Devices/FB_Motor
+--- DECL
+(* 模块说明：连续电机适配入口，供皮带 D1 和盘刀 D3 使用。当前仅仿真运行状态。 *)
+FUNCTION_BLOCK FB_Motor
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    xStall : BOOL; (* 仿真卡住输入；TRUE 暂停位置推进且不发完成，保留忙状态。 *)
+    xInjectFault : BOOL; (* 仿真设备故障输入；TRUE 锁存错误码 9001。 *)
+    stConfig : ST_DeviceConfig; (* 设备类型、初始位置、软限位与仿真动作时间。 *)
+    stCommand : ST_DeviceCommand; (* 当前单设备命令，含动作类型、序号、目标和速度。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+END_VAR
+VAR
+    fbSimulation : FB_SimDevice; (* 内部设备仿真实例，真实设备适配尚未接入。 *)
+END_VAR
+
+--- IMPL
+(* 真实设备适配尚未接入；关闭仿真时返回 3001，避免误认为已具备实机控制。 *)
+fbSimulation(xEnable := xEnable AND xSimulation, xReset := xReset,
+    xStall := xStall, xInjectFault := xInjectFault,
+    stConfig := stConfig, stCommand := stCommand);
+stStatus := fbSimulation.stStatus;
+IF NOT xSimulation THEN
+    stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+    stStatus.xError := TRUE; stStatus.udiErrorID := 3001;
+END_IF
+
+===== Device/Plc Logic/Application/02_Devices/F_At
+--- DECL
+(* 模块说明：检查设备可用、无忙无故障且位置误差小于 0.01。它检查位置，不检查本次命令序号。 *)
+FUNCTION F_At : BOOL
+VAR_INPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+    lrTarget : LREAL; (* 要检查的目标位置；误差小于 0.01 且设备就绪、无忙无错时返回 TRUE。 *)
+END_VAR
+
+--- IMPL
+(* 位置容差为 0.01 工程单位；这里不做新命令序号校验，用于姿态/互锁判断。 *)
+F_At := stStatus.xReady AND NOT stStatus.xBusy
+    AND NOT stStatus.xError AND (ABS(stStatus.lrPosition-lrTarget) < 0.01);
+
+===== Device/Plc Logic/Application/02_Devices/FB_Axis
+--- DECL
+(* 模块说明：定位轴适配入口。当前调用内部仿真；真实轴的 MC 功能块、回原点和限位尚未接入。 *)
+FUNCTION_BLOCK FB_Axis
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    xStall : BOOL; (* 仿真卡住输入；TRUE 暂停位置推进且不发完成，保留忙状态。 *)
+    xInjectFault : BOOL; (* 仿真设备故障输入；TRUE 锁存错误码 9001。 *)
+    stConfig : ST_DeviceConfig; (* 设备类型、初始位置、软限位与仿真动作时间。 *)
+    stCommand : ST_DeviceCommand; (* 当前单设备命令，含动作类型、序号、目标和速度。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+END_VAR
+VAR
+    fbSimulation : FB_SimDevice; (* 内部设备仿真实例，真实设备适配尚未接入。 *)
+END_VAR
+
+--- IMPL
+(* 真实设备适配尚未接入；关闭仿真时返回 3001，避免误认为已具备实机控制。 *)
+fbSimulation(xEnable := xEnable AND xSimulation, xReset := xReset,
+    xStall := xStall, xInjectFault := xInjectFault,
+    stConfig := stConfig, stCommand := stCommand);
+stStatus := fbSimulation.stStatus;
+IF NOT xSimulation THEN
+    stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+    stStatus.xError := TRUE; stStatus.udiErrorID := 3001;
+END_IF
+
+===== Device/Plc Logic/Application/02_Devices/FB_DeviceManager
+--- DECL
+(* 模块说明：统一设备执行入口。首次建立类型和初始位置，每扫描周期按类型调用设备功能块并收集反馈。 *)
+FUNCTION_BLOCK FB_DeviceManager
+VAR_INPUT
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    stSim : ST_SimulationSettings; (* 软件仿真设置；设备管理器按设备索引读取卡住与故障注入。 *)
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+END_VAR
+VAR_OUTPUT
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+END_VAR
+VAR
+    aConfig : ARRAY[1..17] OF ST_DeviceConfig; (* 设备配置数组，首扫描按固定编号设置类型和初始姿态。 *)
+    aAxis : ARRAY[1..17] OF FB_Axis; (* 定位轴功能块实例数组，只有设备类型为 Axis 的元素被调用。 *)
+    aMotor : ARRAY[1..17] OF FB_Motor; (* 连续电机功能块实例数组，供 D1、D3 使用。 *)
+    aCylinder : ARRAY[1..17] OF FB_Cylinder; (* 气缸功能块实例数组，按 G 编号驱动对应仿真实例。 *)
+    aValve : ARRAY[1..17] OF FB_Valve; (* 阀功能块实例数组，供 G5 喷油及 G6 吹气使用。 *)
+    xBooted : BOOL; (* 本功能块首次初始化完成标志，防止每扫描重写初值。 *)
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+END_VAR
+
+--- IMPL
+(* 只在首扫描建立设备类型和初始位置；D6 保留，G4 初始在提升端，其余位置取配置默认。 *)
+IF NOT xBooted THEN
+    aConfig[1].eKind := E_DeviceKind.Motor;
+    aConfig[2].eKind := E_DeviceKind.Axis;
+    aConfig[3].eKind := E_DeviceKind.Motor;
+    aConfig[4].eKind := E_DeviceKind.Axis;
+    (* D5 暂按定位升降建模：0=升起避让，1=下降检测，非实际机械坐标。 *)
+    aConfig[5].eKind := E_DeviceKind.Axis;
+    aConfig[7].eKind := E_DeviceKind.Axis;
+    aConfig[8].eKind := E_DeviceKind.Axis;
+    FOR i := 9 TO 17 DO aConfig[i].eKind := E_DeviceKind.Cylinder; END_FOR
+    aConfig[13].eKind := E_DeviceKind.Valve;
+    aConfig[14].eKind := E_DeviceKind.Valve;
+    aConfig[12].lrInitialPosition := 1.0;
+    FOR i := 1 TO 17 DO
+        IF aConfig[i].eKind = E_DeviceKind.Cylinder THEN
+            aConfig[i].lrMinPosition := 0.0; aConfig[i].lrMaxPosition := 1.0;
+        END_IF
+    END_FOR
+    xBooted := TRUE;
+END_IF
+(* 每周期按设备类型只选择一种执行入口，再将反馈回填同一编号。 *)
+FOR i := 1 TO 17 DO
+    CASE aConfig[i].eKind OF
+    E_DeviceKind.Axis:
+        aAxis[i](xSimulation:=xSimulation,xEnable:=xEnable,xReset:=xReset,
+            xStall:=stSim.axStall[i],xInjectFault:=stSim.axFault[i],stConfig:=aConfig[i],stCommand:=aCommand[i]);
+        aStatus[i] := aAxis[i].stStatus;
+    E_DeviceKind.Motor:
+        aMotor[i](xSimulation:=xSimulation,xEnable:=xEnable,xReset:=xReset,
+            xStall:=stSim.axStall[i],xInjectFault:=stSim.axFault[i],stConfig:=aConfig[i],stCommand:=aCommand[i]);
+        aStatus[i] := aMotor[i].stStatus;
+    E_DeviceKind.Cylinder:
+        aCylinder[i](xSimulation:=xSimulation,xEnable:=xEnable,xReset:=xReset,
+            xStall:=stSim.axStall[i],xInjectFault:=stSim.axFault[i],stConfig:=aConfig[i],stCommand:=aCommand[i]);
+        aStatus[i] := aCylinder[i].stStatus;
+    E_DeviceKind.Valve:
+        aValve[i](xSimulation:=xSimulation,xEnable:=xEnable,xReset:=xReset,
+            xStall:=stSim.axStall[i],xInjectFault:=stSim.axFault[i],stConfig:=aConfig[i],stCommand:=aCommand[i]);
+        aStatus[i] := aValve[i].stStatus;
+    END_CASE
+END_FOR
+
+===== Device/Plc Logic/Application/02_Devices/F_NextID
+--- DECL
+(* 模块说明：生成本次动作的非零序号。计数到最大值后回到 1，用于排除上一步残留的完成反馈。 *)
+FUNCTION F_NextID : UDINT
+VAR_IN_OUT
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+
+--- IMPL
+(* 最大值之后回到 1，跳过无效序号 0；同一机台所有流程共享该计数器。 *)
+IF udiCounter = 16#FFFFFFFF THEN udiCounter := 1;
+ELSE udiCounter := udiCounter + 1;
+END_IF
+F_NextID := udiCounter;
+
+===== Device/Plc Logic/Application/02_Devices/F_Done
+--- DECL
+(* 模块说明：只有设备完成序号等于本次命令序号、无忙且无故障，才返回动作完成。 *)
+FUNCTION F_Done : BOOL
+VAR_INPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+    udiID : UDINT; (* 本次命令序号，0 无效；发起新定位时换新序号。 *)
+END_VAR
+
+--- IMPL
+(* 完成必须匹配本次请求；历史 Done 或仅 Busy=FALSE 都不足以作为本步完成条件。 *)
+F_Done := (udiID <> 0) AND (stStatus.udiCompletedID = udiID)
+    AND NOT stStatus.xBusy AND NOT stStatus.xError;
+
+===== Device/Plc Logic/Application/02_Devices/FB_Valve
+--- DECL
+(* 模块说明：阀适配入口，供喷油 G5 和吹气 G6 使用。当前用运行状态表示开启，未映射输出。 *)
+FUNCTION_BLOCK FB_Valve
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    xStall : BOOL; (* 仿真卡住输入；TRUE 暂停位置推进且不发完成，保留忙状态。 *)
+    xInjectFault : BOOL; (* 仿真设备故障输入；TRUE 锁存错误码 9001。 *)
+    stConfig : ST_DeviceConfig; (* 设备类型、初始位置、软限位与仿真动作时间。 *)
+    stCommand : ST_DeviceCommand; (* 当前单设备命令，含动作类型、序号、目标和速度。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+END_VAR
+VAR
+    fbSimulation : FB_SimDevice; (* 内部设备仿真实例，真实设备适配尚未接入。 *)
+END_VAR
+
+--- IMPL
+(* 真实设备适配尚未接入；关闭仿真时返回 3001，避免误认为已具备实机控制。 *)
+fbSimulation(xEnable := xEnable AND xSimulation, xReset := xReset,
+    xStall := xStall, xInjectFault := xInjectFault,
+    stConfig := stConfig, stCommand := stCommand);
+stStatus := fbSimulation.stStatus;
+IF NOT xSimulation THEN
+    stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+    stStatus.xError := TRUE; stStatus.udiErrorID := 3001;
+END_IF
+
+===== Device/Plc Logic/Application/02_Devices/F_Command
+--- DECL
+(* 模块说明：组装设备命令，不执行运动。由设备管理器和对应设备功能块实际处理。 *)
+FUNCTION F_Command : ST_DeviceCommand
+VAR_INPUT
+    eAction : E_DeviceAction; (* 动作类型：无请求、定位、连续运行、点动或停止，见 E_DeviceAction。 *)
+    udiID : UDINT; (* 本次命令序号，0 无效；发起新定位时换新序号。 *)
+    lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连续运行和点动不使用该位置。 *)
+    lrVelocity : LREAL; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
+END_VAR
+
+--- IMPL
+(* 只复制字段形成结构体，不等待动作、不直接访问物理设备。 *)
+F_Command.eAction := eAction;
+F_Command.udiID := udiID;
+F_Command.lrTarget := lrTarget;
+F_Command.lrVelocity := lrVelocity;
+
+===== Device/Plc Logic/Application/02_Devices/FB_Cylinder
+--- DECL
+(* 模块说明：气缸适配入口。当前用 0/1 位置模拟两端到位；真实电磁阀和到位传感器尚未映射。 *)
+FUNCTION_BLOCK FB_Cylinder
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xEnable : BOOL; (* 本功能使能，电平有效；失能时不接受新的动作请求。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+    xStall : BOOL; (* 仿真卡住输入；TRUE 暂停位置推进且不发完成，保留忙状态。 *)
+    xInjectFault : BOOL; (* 仿真设备故障输入；TRUE 锁存错误码 9001。 *)
+    stConfig : ST_DeviceConfig; (* 设备类型、初始位置、软限位与仿真动作时间。 *)
+    stCommand : ST_DeviceCommand; (* 当前单设备命令，含动作类型、序号、目标和速度。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_DeviceStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+END_VAR
+VAR
+    fbSimulation : FB_SimDevice; (* 内部设备仿真实例，真实设备适配尚未接入。 *)
+END_VAR
+
+--- IMPL
+(* 真实设备适配尚未接入；关闭仿真时返回 3001，避免误认为已具备实机控制。 *)
+fbSimulation(xEnable := xEnable AND xSimulation, xReset := xReset,
+    xStall := xStall, xInjectFault := xInjectFault,
+    stConfig := stConfig, stCommand := stCommand);
+stStatus := fbSimulation.stStatus;
+IF NOT xSimulation THEN
+    stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+    stStatus.xError := TRUE; stStatus.udiErrorID := 3001;
+END_IF
+
+===== Device/Plc Logic/Application/01_Data/GVL_Simulation
+--- DECL
+(* 模块说明：仿真调试入口。可模拟来料、动作卡住、设备故障和安全许可丢失。 *)
+VAR_GLOBAL
+    stSettings : ST_SimulationSettings; (* 软件仿真参数，含来料方式和异常注入。 *)
+    stPanelInputs : ST_PanelInputs; (* 仿真旋钮/按钮输入；xAutoMode 选择模式，其余按钮按住/释放模拟物理信号。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/01_Data/GVL_Interface
+--- DECL
+(* 模块说明：监控与调试接口。stPanel 每周期由面板解码覆盖，不是上位机命令入口；手动请求保留待物理按钮映射。 *)
+VAR_GLOBAL
+    stPanel : ST_OperatorCommand; (* 本地面板解码结果，只读观察；每周期覆盖，操作请使用实体或仿真面板输入。 *)
+    aManual : ARRAY[1..17] OF ST_ManualCommand; (* 各设备手动请求，索引 1..17；进入手动后先释放所有按钮再允许动作。 *)
+    stStatus : ST_MachineStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+    aDeviceStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 设备管理器汇总反馈，索引 1..17；供工序判断及在线监控。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/01_Data/GVL_IO
+--- DECL
+(* 模块说明：逻辑 I/O 预留接口，尚未绑定物理地址。数字输出数组当前每周期清零；G2 需求仅用于观察。 *)
+VAR_GLOBAL
+    (* 当前均为普通逻辑变量，没有 AT %Q / %I 物理地址绑定。 *)
+    xSafetyOK : BOOL; (* 安全许可接口或仿真许可，TRUE 允许；不等同于安全级急停回路。 *)
+    stPanelInputs : ST_PanelInputs; (* 实体面板的模式旋钮、初始化、启动、停止、复位逻辑信号；急停走独立安全许可。 *)
+    xMaterialAtLength : BOOL; (* 真实光电到位预留输入，当前未映射物理输入，仿真时不采用此值。 *)
+    axDigitalInputs : ARRAY[0..31] OF BOOL; (* 预留数字输入位，索引 0..31；当前未映射到真实输入。 *)
+    axDigitalOutputs : ARRAY[0..31] OF BOOL; (* 预留数字输出位，索引 0..31；当前由 FB_IOMap 每周期清 FALSE。 *)
+    axG2RelayDemand : ARRAY[1..3] OF BOOL; (* G2 三路逻辑继电器需求：1=300 料型，2=400，3=600；未映射物理输出。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/01_Data/GVL_Modbus
+--- DECL
+(* 模块说明：Modbus 收发缓冲区，索引从 0 开始，尚未绑定网络寄存器。实际地址和字序需另行配置。 *)
+VAR_GLOBAL
+    (* 仅预留收发缓冲区，尚未绑定工程中的 MODBUS_TCP 网络映射。 *)
+    xEnable : BOOL; (* 启用 Modbus 缓冲区解析，默认 FALSE；不代表网络映射已经配置。 *)
+    awRx : ARRAY[0..31] OF WORD; (* v2 接收字：0=版本2，1=序号，2=命令2启动/3停止；3/4 保留且必须为0，不接受模式写入。 *)
+    awTx : ARRAY[0..127] OF WORD; (* 发布字缓冲区 0..127；包含确认、状态、报警、计数和位置，详见程序内索引注释。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/01_Data/GVL_Parameters
+--- DECL
+(* 模块说明：仿真开关和待执行配方。参数生效时机见 ST_Recipe；关闭仿真当前报 3001，未接入真实设备。 *)
+VAR_GLOBAL
+    (* 以下默认值仅供软件仿真，不能直接作为已确认的生产参数。 *)
+    xSimulation : BOOL := TRUE; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    xContinuous : BOOL := FALSE; (* 本地工程配置的单循环/连续选择；上位机启停帧不修改此设置，默认单循环。 *)
+    xAllowRemoteStartStop : BOOL := FALSE; (* 本地工程配置授权远程启停，默认 FALSE；不授予改模式、初始化或复位权限，也不映射给上位机写。 *)
+    stRecipe : ST_Recipe; (* 待执行配方：初始化和自动启动时校验并取快照，运行中修改不会立即生效。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/01_Data/GVL_DeviceIds
+--- DECL
+(* 模块说明：设备数组索引常量。D1..D8 对应索引 1..8，D6 保留；G1..G9 对应索引 9..17。 *)
+VAR_GLOBAL CONSTANT
+    D1_Belt : UINT := 1; (* D1 送料皮带电机，设备数组索引 1。 *)
+    D2_CutFeed : UINT := 2; (* D2 切割走刀/回刀轴，设备数组索引 2。 *)
+    D3_Spindle : UINT := 3; (* D3 盘刀旋转电机，设备数组索引 3。 *)
+    D4_LengthMove : UINT := 4; (* D4 定长平移轴，设备数组索引 4。 *)
+    D5_LengthLift : UINT := 5; (* D5 定长升降，0 升起避让，1 下降检测，索引 5。 *)
+    D7_GripperMove : UINT := 7; (* D7 机械手平移，索引 7；索引 6 为保留设备 D6。 *)
+    D8_Rotate : UINT := 8; (* D8 平台旋转轴，设备数组索引 8。 *)
+    G1_Press : UINT := 9; (* G1 下压气缸，0 抬起，1 下压，索引 9。 *)
+    G2_SideStop : UINT := 10; (* G2 侧挡升降，0 提升，1 下降；按料型选择继电器，索引 10。 *)
+    G3_Push : UINT := 11; (* G3 推动气缸，0 放开，1 侧推，索引 11。 *)
+    G4_RollerLift : UINT := 12; (* G4 流利条升降，0 下降，1 提升，索引 12。 *)
+    G5_Spray : UINT := 13; (* G5 喷油阀，连续运行请求表示打开，索引 13。 *)
+    G6_Air : UINT := 14; (* G6 吹气阀，切割开始打开、切割结束关闭，索引 14。 *)
+    G7_GripperLift : UINT := 15; (* G7 机械手升降，0 下降，1 提升，索引 15。 *)
+    G8_GripperClamp : UINT := 16; (* G8 机械手夹爪，0 打开，1 夹紧，索引 16。 *)
+    G9_KnifeLift : UINT := 17; (* G9 盘刀升降，0 提升，1 下降，索引 17。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/03_Units/FB_ResetLength
+--- DECL
+(* 模块说明：收尾支线 C：D4 回检测位置、D5 下降到位、确认下降位置；随后具备来料检测条件。 *)
+FUNCTION_BLOCK FB_ResetLength
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4500；动作超时码=4500+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* C010 定长 D4 回到配方检测位置 lrLengthPosition。 *)
+aCommand[4] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrLengthPosition, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[4], udiToken) THEN uiStep := 20; END_IF;
+20: (* C020 D4 到位后，定长 D5 下降。 *)
+aCommand[5] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[5], udiToken) THEN uiStep := 30; END_IF;
+30: (* C030 确认 D5 下降端到位，后续送料才具备光电检测条件。 *)
+IF F_At(aStatus[5],1.0) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4500;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4500 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_Unload
+--- DECL
+(* 模块说明：收尾支线 B：机械手移料。后退、下降、最终回位是三个独立动作，全部完成后才允许下一轮送料。 *)
+FUNCTION_BLOCK FB_Unload
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4400；动作超时码=4400+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* B010 侧挡 G2 提升。 *)
+aCommand[10] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[10], udiToken) THEN uiStep := 20; END_IF;
+20: (* B020 流利条 G4 提升。 *)
+aCommand[12] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[12], udiToken) THEN uiStep := 30; END_IF;
+30: (* B030 机械手 G7 提升。 *)
+aCommand[15] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[15], udiToken) THEN uiStep := 40; END_IF;
+40: (* B040 夹爪 G8 打开，准备前进取料。 *)
+aCommand[16] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[16], udiToken) THEN uiStep := 50; END_IF;
+50: (* B050 机械手 D7 前进到取料位置 lrGripperFront。 *)
+aCommand[7] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrGripperFront, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[7], udiToken) THEN uiStep := 60; END_IF;
+60: (* B060 夹爪 G8 夹紧，确认后才拉料。 *)
+aCommand[16] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[16], udiToken) THEN uiStep := 70; END_IF;
+70: (* B070 机械手 D7 拉料到 lrGripperPull。 *)
+aCommand[7] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrGripperPull, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[7], udiToken) THEN uiStep := 80; END_IF;
+80: (* B080 夹爪 G8 打开，释放移走的料。 *)
+aCommand[16] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[16], udiToken) THEN uiStep := 90; END_IF;
+90: (* B090 保持机械手抬升，D7 后退至 lrGripperBack；此时不是最终回位。 *)
+aCommand[7] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrGripperBack, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[7], udiToken) THEN uiStep := 100; END_IF;
+100: (* B100 后退到位后，G7 下降。 *)
+aCommand[15] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[15], udiToken) THEN uiStep := 110; END_IF;
+110: (* B110 下降到位后，D7 再回 lrGripperHome；本支线结束前不允许送料。 *)
+aCommand[7] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrGripperHome, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[7], udiToken) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4400;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4400 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_ClearLength
+--- DECL
+(* 模块说明：切割前避让支线 P：D5 定长升起，再将 D4 移到避让位置。每步等待本次序号完成。 *)
+FUNCTION_BLOCK FB_ClearLength
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4100；动作超时码=4100+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* P010 定长 D5 升起避让；确认本次动作完成后再允许 D4 平移。 *)
+aCommand[5] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[5], udiToken) THEN uiStep := 20; END_IF;
+20: (* P020 定长 D4 移到配方避让位置，等待本次序号完成。 *)
+aCommand[4] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrLengthClear, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[4], udiToken) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4100;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4100 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_Initialize
+--- DECL
+(* 模块说明：软件仿真的初始姿态整理流程。接实机前应按机械结构设计真实回原点与初始化动作。 *)
+FUNCTION_BLOCK FB_Initialize
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4600；动作超时码=4600+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* 仿真初始化 10：同时抬起 G9、抬起 G1、打开 G8，三项都完成才继续。 *)
+aCommand[17] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+aCommand[9] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+aCommand[16] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[17], udiToken) AND F_Done(aStatus[9], udiToken) AND F_Done(aStatus[16], udiToken) THEN uiStep := 20; END_IF;
+20: (* 仿真初始化 20：D5 升起、G2 提升、G3 释放、G4 提升、G7 下降，全部完成再定位。 *)
+aCommand[5] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+aCommand[10] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+aCommand[11] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+aCommand[12] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+aCommand[15] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[5], udiToken) AND F_Done(aStatus[10], udiToken) AND F_Done(aStatus[11], udiToken) AND F_Done(aStatus[12], udiToken) AND F_Done(aStatus[15], udiToken) THEN uiStep := 30; END_IF;
+30: (* 仿真初始化 30：D2/D4/D7/D8 移至示例初始坐标，全部完成才继续。 *)
+aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrPositionVelocity);
+aCommand[4] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrLengthPosition, stRecipe.lrPositionVelocity);
+aCommand[7] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrGripperHome, stRecipe.lrPositionVelocity);
+aCommand[8] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[2], udiToken) AND F_Done(aStatus[4], udiToken) AND F_Done(aStatus[7], udiToken) AND F_Done(aStatus[8], udiToken) THEN uiStep := 40; END_IF;
+40: (* 仿真初始化 40：D5 下降，准备进入来料检测。 *)
+aCommand[5] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[5], udiToken) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4600;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4600 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_ClearanceUnit
+--- DECL
+(* 模块说明：并行执行 P/Q 两路避让；两路都完成才继续，任一路故障向主流程报告。 *)
+FUNCTION_BLOCK FB_ClearanceUnit
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 错误码；0 表示无错误，设备或流程发生异常时赋值。 *)
+    uiLengthStep : UINT; (* 定长支线当前步骤，供监控定位等待点。 *)
+    uiTransferStep : UINT; (* 流利条/侧推/侧挡支线当前步骤，供监控定位等待点。 *)
+END_VAR
+VAR
+    fbLength : FB_ClearLength; (* P 支线：D5 升起、D4 移开。 *)
+    fbTransfer : FB_ClearTransfer; (* 切割前流利条/侧推/侧挡避让支线。 *)
+END_VAR
+
+--- IMPL
+(* P/Q 两路同一扫描使能；xDone 使用 AND，任一路未完成均不得继续。 *)
+fbLength(xExecute:=xExecute,stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+fbTransfer(xExecute:=xExecute,stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+xDone := fbLength.xDone AND fbTransfer.xDone;
+xError := fbLength.xError OR fbTransfer.xError;
+udiErrorID := MAX(fbLength.udiErrorID,fbTransfer.udiErrorID);
+uiLengthStep := fbLength.uiStep; uiTransferStep := fbTransfer.uiStep;
+
+===== Device/Plc Logic/Application/03_Units/FB_ReturnKnife
+--- DECL
+(* 模块说明：收尾支线 A：G5 喷油到设定时间，再令 D2 回刀。喷油仅在第一步保持请求。 *)
+FUNCTION_BLOCK FB_ReturnKnife
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4300；动作超时码=4300+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* A010 G5 喷油并等待 tSpray；喷油建立后才开始计时。 *)
+aCommand[13] := F_Command(E_DeviceAction.Run, udiToken, 0.0, 0.0);
+IF tonSpray.Q THEN uiStep := 20; END_IF;
+20: (* A020 结束喷油请求，D2 回到 lrCutHome，等待到位。 *)
+aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[2], udiToken) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4300;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4300 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_ClearTransfer
+--- DECL
+(* 模块说明：切割前避让支线 Q：G4 流利条下降、G3 解除侧推、G2 侧挡下降。 *)
+FUNCTION_BLOCK FB_ClearTransfer
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法步骤码 4200；动作超时码=4200+uiStep，可据此定位本支线等待点。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+END_VAR
+VAR
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
+END_VAR
+
+--- IMPL
+(* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF;
+uiPrevStep := uiStep;
+tonStep(IN := xExecute AND (uiStep > 0) AND (uiStep < 1000) AND NOT xEntry, PT := stRecipe.tStepTimeout);
+tonSpray(IN := xExecute AND (uiStep = 10) AND aStatus[13].xActive, PT := stRecipe.tSpray);
+IF xExecute AND NOT xError THEN
+CASE uiStep OF
+0: (* 待机；许可有效时进入首个动作。 *) uiStep := 10;
+10: (* Q010 流利条 G4 下降。 *)
+aCommand[12] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[12], udiToken) THEN uiStep := 20; END_IF;
+20: (* Q020 推动气缸 G3 放开。 *)
+aCommand[11] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[11], udiToken) THEN uiStep := 30; END_IF;
+30: (* Q030 侧挡 G2 下降；继电器选择由当前料型决定。 *)
+aCommand[10] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
+IF F_Done(aStatus[10], udiToken) THEN uiStep := 1000; END_IF;
+1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
+ELSE xError := TRUE; udiErrorID := 4200;
+END_CASE;
+IF tonStep.Q THEN xError := TRUE; udiErrorID := 4200 + UINT_TO_UDINT(uiStep); END_IF;
+END_IF;
+xDone := xExecute AND (uiStep = 1000) AND NOT xError;
+
+===== Device/Plc Logic/Application/03_Units/FB_PostCut
+--- DECL
+(* 模块说明：切割后先 G9 抬刀，再 G1 抬压；之后同时执行回刀、机械手移料、定长复位，三路全完成才结束。 *)
+FUNCTION_BLOCK FB_PostCut
+VAR_INPUT
+    xExecute : BOOL; (* 子流程执行许可；须保持到完成，清 FALSE 复位该流程步骤和错误。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    xDone : BOOL; (* 本子流程完成标志；执行许可撤销后复位。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法总步骤为 4700，超时为 4700+总步号；支线故障则向上传递支线错误码。 *)
+    uiStep : UINT; (* 当前子步骤：0 待机，10/20/... 执行动作，1000 完成；切勿在线强制跳步。 *)
+    uiKnifeStep : UINT; (* 收尾回刀支线 A 当前步骤：喷油、回刀或完成。 *)
+    uiUnloadStep : UINT; (* 机械手移料支线 B 步骤，10..110 每步加 10，1000 完成；详见 FB_Unload。 *)
+    uiLengthStep : UINT; (* 定长支线当前步骤，供监控定位等待点。 *)
+END_VAR
+VAR
+    fbKnife : FB_ReturnKnife; (* 收尾支线 A：喷油后回刀。 *)
+    fbUnload : FB_Unload; (* 收尾支线 B：机械手移料，含后退、下降、最终回位。 *)
+    fbLength : FB_ResetLength; (* C 支线：D4 回检测位置、D5 下降、确认下降到位。 *)
+    uiPrevStep : UINT := 65535; (* 上扫描步骤，用于判断本扫描是否刚进入新步骤。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+END_VAR
+
+--- IMPL
+IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF
+(* 每个总步骤分配新序号；等待三路期间保留总步骤超时。 *)
+xEntry := uiStep <> uiPrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF
+uiPrevStep := uiStep;
+tonStep(IN:=xExecute AND NOT xEntry AND (uiStep>0) AND (uiStep<1000),PT:=stRecipe.tStepTimeout);
+IF xExecute AND NOT xError THEN
+    CASE uiStep OF
+    0: (* 待机，执行许可有效后进入抬刀。 *) uiStep := 10;
+    10: (* 先 G9 盘刀提升，等待本次序号完成。 *)
+        aCommand[17] := F_Command(E_DeviceAction.Position,udiToken,0.0,stRecipe.lrPositionVelocity);
+        IF F_Done(aStatus[17],udiToken) THEN uiStep := 20; END_IF
+    20: (* 再 G1 下压提升，等待本次序号完成。 *)
+        aCommand[9] := F_Command(E_DeviceAction.Position,udiToken,0.0,stRecipe.lrPositionVelocity);
+        IF F_Done(aStatus[9],udiToken) THEN uiStep := 30; END_IF
+    30: (* 等待回刀、机械手移料、定长复位三路全部完成。 *)
+        IF fbKnife.xDone AND fbUnload.xDone AND fbLength.xDone THEN uiStep := 1000; END_IF
+    1000: (* 三路收尾结束，保持完成反馈直到执行许可撤销。 *) ;
+    ELSE xError := TRUE; udiErrorID := 4700;
+    END_CASE
+    IF tonStep.Q THEN xError := TRUE; udiErrorID := 4700+UINT_TO_UDINT(uiStep); END_IF
+END_IF
+(* 三路只在总步骤 30 同时使能，并且每扫描调用；等待三路全完成才退出。 *)
+fbKnife(xExecute:=xExecute AND (uiStep=30),stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+fbUnload(xExecute:=xExecute AND (uiStep=30),stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+fbLength(xExecute:=xExecute AND (uiStep=30),stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+IF fbKnife.xError OR fbUnload.xError OR fbLength.xError THEN
+    xError:=TRUE; udiErrorID:=MAX(fbKnife.udiErrorID,MAX(fbUnload.udiErrorID,fbLength.udiErrorID));
+END_IF
+xDone := xExecute AND (uiStep=1000) AND NOT xError;
+uiKnifeStep:=fbKnife.uiStep; uiUnloadStep:=fbUnload.uiStep; uiLengthStep:=fbLength.uiStep;
+
+===== Device/Plc Logic/Application/04_Machine/F_RecipeValid
+--- DECL
+(* 模块说明：检查框架允许的料型、速度、行程和位置顺序。通过仅表示符合示例边界，不代表实机参数已经确认。 *)
+FUNCTION F_RecipeValid : BOOL
+VAR_INPUT
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+
+--- IMPL
+(* 示例边界：切长 0..500、速度 0..100、角度正负360，并要求机械手回位<后退<前进<拉料。边界是否适合实机仍需标定。 *)
+F_RecipeValid := ((stRecipe.uiMaterialModel = 300) OR
+    (stRecipe.uiMaterialModel = 400) OR (stRecipe.uiMaterialModel = 600))
+    AND (stRecipe.lrCutLength > 0.0) AND (stRecipe.lrCutLength <= 500.0)
+    AND (stRecipe.lrCutVelocity > 0.0) AND (stRecipe.lrCutVelocity <= 100.0)
+    AND (stRecipe.lrPositionVelocity > 0.0) AND (stRecipe.lrPositionVelocity <= 100.0)
+    AND (stRecipe.lrBeltVelocity > 0.0) AND (stRecipe.lrBeltVelocity <= 100.0)
+    AND (stRecipe.lrSpindleVelocity > 0.0) AND (stRecipe.lrSpindleVelocity <= 100.0)
+    AND (stRecipe.tStepTimeout >= T#1S) AND (stRecipe.tSpray > T#0MS)
+    AND (ABS(stRecipe.lrCutHome) <= 500.0)
+    AND (ABS(stRecipe.lrCutHome + stRecipe.lrCutLength) <= 1000.0)
+    AND (ABS(stRecipe.lrLengthPosition) <= 1000.0)
+    AND (ABS(stRecipe.lrLengthClear) <= 1000.0)
+    AND (ABS(stRecipe.lrRotateAngle) <= 360.0)
+    AND (stRecipe.lrGripperHome < stRecipe.lrGripperBack)
+    AND (stRecipe.lrGripperBack < stRecipe.lrGripperFront)
+    AND (stRecipe.lrGripperFront < stRecipe.lrGripperPull)
+    AND (ABS(stRecipe.lrGripperPull) <= 1000.0);
+
+===== Device/Plc Logic/Application/04_Machine/FB_IOMap
+--- DECL
+(* 模块说明：物理 I/O 映射预留。当前数字输出全为 FALSE；G2 按料型形成三个未映射的继电器需求。 *)
+FUNCTION_BLOCK FB_IOMap
+VAR_INPUT
+    uiMaterialModel : UINT; (* 料型选择，仅支持 300/400/600，对应 G2 三个继电器；不是位移。 *)
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 最终设备命令预留输入，当前映射实现未使用该数组。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+END_VAR
+VAR_IN_OUT
+    axOutputs : ARRAY[0..31] OF BOOL; (* 预留物理数字输出数组 0..31，当前实现每周期强制清 FALSE。 *)
+    axG2RelayDemand : ARRAY[1..3] OF BOOL; (* G2 三路逻辑继电器需求：1=300 料型，2=400，3=600；未映射物理输出。 *)
+END_VAR
+VAR
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+END_VAR
+
+--- IMPL
+(* 物理输出尚未实现；G2 三路继电器需求只用于逻辑观察。 *)
+FOR i:=0 TO 31 DO axOutputs[i]:=FALSE; END_FOR
+FOR i:=1 TO 3 DO axG2RelayDemand[i]:=FALSE; END_FOR
+(* 仅当 G2 下降反馈大于 0.5 时，按运行料型选择一条需求；未绑定物理继电器。 *)
+IF aStatus[10].lrPosition>0.5 THEN
+    CASE uiMaterialModel OF
+    300: axG2RelayDemand[1]:=TRUE;
+    400: axG2RelayDemand[2]:=TRUE;
+    600: axG2RelayDemand[3]:=TRUE;
+    END_CASE
+END_IF
+
+===== Device/Plc Logic/Application/04_Machine/FB_Machine
+--- DECL
+(* 模块说明：整机调度中心：命令选择、模式和报警管理、初始化/手动/自动调度、统一互锁、设备执行及状态发布。 *)
+FUNCTION_BLOCK FB_Machine
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    stPanel : ST_OperatorCommand; (* 本地实体面板解码结果；模式、初始化、复位始终以它为准。 *)
+    stRemote : ST_RemoteCommand; (* 上位机可选的启停请求，不包含模式或初始化/复位字段。 *)
+    xRemoteRequest : BOOL; (* 远程新命令有效脉冲；无新帧时仅保留模式与连续选择。 *)
+    xAllowRemoteStartStop : BOOL; (* 本地工程配置授权远程启停，默认 FALSE；不授予改模式、初始化或复位权限，也不映射给上位机写。 *)
+    wRemoteSequence : WORD; (* 本次远程新命令序号，整机处理后写入确认状态。 *)
+    aManual : ARRAY[1..17] OF ST_ManualCommand; (* 各设备手动请求，索引 1..17；进入手动后先释放所有按钮再允许动作。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+    stSim : ST_SimulationSettings; (* 软件仿真设置；设备管理器按设备索引读取卡住与故障注入。 *)
+    xRealSafetyOK : BOOL; (* 真实安全许可预留接口；当前仿真模式使用 stSim.xSafetyOK。 *)
+    xRealMaterial : BOOL; (* 真实定长光电预留输入；当前仿真模式由 FB_SimPlant 提供。 *)
+END_VAR
+VAR_OUTPUT
+    stStatus : ST_MachineStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+    aDeviceStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 设备管理器汇总反馈，索引 1..17；供工序判断及在线监控。 *)
+    aSelectedCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 通过统一互锁后的最终设备请求，交设备管理器执行。 *)
+END_VAR
+VAR
+    stCommand : ST_OperatorCommand; (* 本周期选择并合并后的整机命令；本地停止始终优先于远程。 *)
+    stActiveRecipe : ST_Recipe; (* 本次初始化/自动启动时采纳的配方快照，运行中不直接跟随参数区变化。 *)
+    aRequest : ARRAY[1..17] OF ST_DeviceCommand; (* 初始化/手动/自动产生的原始请求，每周期先清空，再交互锁筛选。 *)
+    stEmpty : ST_DeviceCommand; (* 默认全零设备命令，每周期用它清空原始请求，未被重新提出的动作自动取消。 *)
+    fbDevices : FB_DeviceManager; (* 统一设备管理器，每周期调用一次，汇总各设备反馈。 *)
+    fbManual : FB_ManualControl; (* 手动请求转换功能块，须处于手动并已释放全部按钮才使能。 *)
+    fbAuto : FB_AutoCycle; (* 自动主流程功能块，仅在整机 Automatic 状态运行。 *)
+    fbInitialize : FB_Initialize; (* 初始化功能块，仅在整机 Initializing 状态执行。 *)
+    fbInterlocks : FB_Interlocks; (* 所有模式共用的软件互锁，输出最终允许的请求。 *)
+    fbPlant : FB_SimPlant; (* 仿真整机来料模型；当前流程读取其上一扫描的到位反馈。 *)
+    fbAlarm : FB_AlarmManager; (* 整机首报警锁存功能块。 *)
+    rtInitialize : R_TRIG; (* 初始化按钮上升沿检测。 *)
+    rtStart : R_TRIG; (* 自动启动按钮上升沿检测。 *)
+    rtReset : R_TRIG; (* 报警复位按钮上升沿检测。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+    udiFault : UDINT; (* 本扫描整理出的报警原因；设备错误使用 10000+设备索引。 *)
+    xSafetyOK : BOOL; (* 安全许可接口或仿真许可，TRUE 允许；不等同于安全级急停回路。 *)
+    xMaterial : BOOL; (* 当前实际采用的来料信号，仿真与实机预留输入二选一。 *)
+    xInitialized : BOOL; (* 初始化完成标志；停止、运行中切换模式或故障会清除。 *)
+    xPermit : BOOL; (* 整机当前允许发出动作的总许可；仍需继续满足各设备互锁。 *)
+    xRemoteAccepted : BOOL; (* 本扫描远程命令已获授权，用于回传状态拒绝或配方错误。 *)
+    xStartRequest : BOOL; (* 本次启动事件=本地启动按钮上升沿或已接受的远程启动帧；两种事件分别处理以免相互吞掉。 *)
+    xResetDevices : BOOL; (* 本扫描设备复位脉冲，需复位上升沿、安全许可和仿真模式均满足。 *)
+    xLastSimulation : BOOL := TRUE; (* 上扫描仿真开关；切换模式时清除初始化并停止。 *)
+    xManualReleased : BOOL; (* 所有手动按钮都已释放，用于避免带着按住命令进入手动。 *)
+    xManualArmed : BOOL; (* 本次进入手动后已观察到全部按钮释放；离开手动即清除。 *)
+    eActiveMode : E_MachineMode; (* 当前初始化/运行时采纳的操作模式，用于检测运行中切换模式。 *)
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+END_VAR
+
+--- IMPL
+(* 一、选择命令来源：本地默认优先；远程须授权，本地停止始终有效。 *)
+stCommand:=stPanel;
+(* 模式、初始化、复位来自实体面板；远程只可追加经过授权的启停，不能替换整份本地命令。 *)
+xRemoteAccepted:=FALSE;
+IF xRemoteRequest THEN
+    stStatus.wRemoteAckSequence:=wRemoteSequence;
+    IF xAllowRemoteStartStop THEN
+        IF stRemote.xStop THEN
+            stCommand.xStop:=TRUE;
+            stStatus.uiRemoteResult:=0; xRemoteAccepted:=TRUE;
+        ELSIF stRemote.xStart THEN
+            IF (stPanel.eMode=E_MachineMode.Automatic)
+               AND (stStatus.eState=E_MachineState.Ready) AND NOT stPanel.xStop THEN
+                stStatus.uiRemoteResult:=0; xRemoteAccepted:=TRUE;
+            ELSE stStatus.uiRemoteResult:=3; END_IF
+        ELSE stStatus.uiRemoteResult:=2; END_IF
+    ELSE stStatus.uiRemoteResult:=1;
+    END_IF
+END_IF
+(* 二、提取初始化/启动/复位上升沿；采样仿真或真实预留输入。 *)
+rtInitialize(CLK:=stCommand.xInitialize);
+rtStart(CLK:=stCommand.xStart);
+(* 本地启动取按钮上升沿，远程启动取新帧脉冲，分别形成事件；本地停止仍优先。 *)
+xStartRequest:=rtStart.Q OR (xRemoteAccepted AND stRemote.xStart AND NOT stRemote.xStop);
+rtReset(CLK:=stCommand.xResetAlarm);
+IF xSimulation THEN xSafetyOK:=stSim.xSafetyOK; xMaterial:=fbPlant.xMaterialAtLength;
+ELSE xSafetyOK:=xRealSafetyOK; xMaterial:=xRealMaterial; END_IF
+(* 三、整理当前报警原因并清空本扫描请求；未被子流程重新提出的动作自动取消。 *)
+udiFault:=0;
+IF NOT xSafetyOK THEN udiFault:=1001; END_IF
+IF NOT xSimulation THEN udiFault:=3001; END_IF
+IF xSimulation<>xLastSimulation THEN
+    stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE;
+END_IF
+xLastSimulation:=xSimulation;
+FOR i:=1 TO 17 DO
+    IF aDeviceStatus[i].xError THEN udiFault:=10000+INT_TO_UDINT(i); END_IF
+    aRequest[i]:=stEmpty;
+END_FOR
+(* 四、运行中切模式、停止或故障会撤销初始化，不能直接接续上一次工序。 *)
+IF (stStatus.eState=E_MachineState.Automatic) OR (stStatus.eState=E_MachineState.Manual) THEN
+    IF stCommand.eMode<>eActiveMode THEN stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE; END_IF
+END_IF
+IF stCommand.xStop THEN stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE; END_IF
+IF udiFault<>0 THEN stStatus.eState:=E_MachineState.Fault; xInitialized:=FALSE; END_IF
+(* 五、复位设备和首报警锁存；必须先撤销故障原因，复位不自动启动。 *)
+xResetDevices:=rtReset.Q AND xSafetyOK AND xSimulation;
+IF xResetDevices THEN
+    (* 复位时先按仍有效的故障注入判断原因，再清设备错误和整机锁存；原因未撤销不能复位。 *)
+    udiFault:=0;
+    FOR i:=1 TO 17 DO IF stSim.axFault[i] THEN udiFault:=10000+INT_TO_UDINT(i); END_IF END_FOR
+END_IF
+fbAlarm(udiIncoming:=udiFault,xReset:=xResetDevices);
+IF (stStatus.eState=E_MachineState.Fault) AND (fbAlarm.udiLatched=0) AND xResetDevices THEN
+    stStatus.eState:=E_MachineState.Stopped;
+END_IF
+IF fbAlarm.udiLatched<>0 THEN stStatus.eState:=E_MachineState.Fault; END_IF
+(* 六、仅停止态接受初始化；配方通过检查后取快照。 *)
+IF rtInitialize.Q AND NOT stCommand.xStop THEN
+    IF (stStatus.eState=E_MachineState.Stopped) AND xSimulation AND xSafetyOK AND F_RecipeValid(stRecipe) THEN
+        stActiveRecipe:=stRecipe; stStatus.eState:=E_MachineState.Initializing;
+        eActiveMode:=stCommand.eMode; xInitialized:=FALSE;
+    ELSIF xRemoteAccepted THEN stStatus.uiRemoteResult:=3;
+    END_IF
+END_IF
+(* 七、初始化完成后才能启动自动；手动进入后还需全部按钮释放。 *)
+IF stStatus.eState=E_MachineState.Ready THEN
+    IF stCommand.eMode=E_MachineMode.Manual THEN
+        stStatus.eState:=E_MachineState.Manual; eActiveMode:=E_MachineMode.Manual;
+    ELSIF xStartRequest AND NOT stCommand.xStop THEN
+        IF F_RecipeValid(stRecipe) THEN
+            stActiveRecipe:=stRecipe; eActiveMode:=E_MachineMode.Automatic;
+            stStatus.eState:=E_MachineState.Automatic;
+        ELSIF xRemoteAccepted THEN stStatus.uiRemoteResult:=5;
+        END_IF
+    END_IF
+ELSIF (stStatus.eState=E_MachineState.Manual) AND (stCommand.eMode=E_MachineMode.Automatic) THEN
+    stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE;
+END_IF
+IF xStartRequest AND xRemoteAccepted AND (stStatus.eState<>E_MachineState.Automatic)
+   AND (stStatus.uiRemoteResult=0) THEN stStatus.uiRemoteResult:=3; END_IF
+
+(* 八、手动进入联锁：观察到一次全部按钮释放后，才开放点动/定位操作。 *)
+xManualReleased:=TRUE;
+FOR i:=1 TO 17 DO
+    IF aManual[i].xJogPositive OR aManual[i].xJogNegative OR aManual[i].xMove OR aManual[i].xRun THEN xManualReleased:=FALSE; END_IF
+END_FOR
+IF stStatus.eState<>E_MachineState.Manual THEN xManualArmed:=FALSE;
+ELSIF xManualReleased THEN xManualArmed:=TRUE;
+END_IF
+(* 九、每扫描调用各模式功能块，失能的流程同时复位；共享请求只由当前模式提出。 *)
+fbInitialize(xExecute:=stStatus.eState=E_MachineState.Initializing,stRecipe:=stActiveRecipe,
+    aCommand:=aRequest,aStatus:=aDeviceStatus,udiCounter:=udiCounter);
+fbManual(xEnable:=(stStatus.eState=E_MachineState.Manual) AND xManualArmed,
+    aManual:=aManual,aCommand:=aRequest,aStatus:=aDeviceStatus,udiCounter:=udiCounter);
+fbAuto(xRun:=stStatus.eState=E_MachineState.Automatic,xContinuous:=stCommand.xContinuous,
+    xMaterialAtLength:=xMaterial,stRecipe:=stActiveRecipe,aCommand:=aRequest,aStatus:=aDeviceStatus,udiCounter:=udiCounter);
+(* 十、汇总流程完成和流程错误，单循环完成后回到 Ready。 *)
+IF fbInitialize.xDone THEN xInitialized:=TRUE; stStatus.eState:=E_MachineState.Ready; END_IF
+IF fbInitialize.xError OR fbAuto.xError THEN
+    udiFault:=MAX(fbInitialize.udiErrorID,fbAuto.udiErrorID);
+    fbAlarm(udiIncoming:=udiFault,xReset:=FALSE);
+    stStatus.eState:=E_MachineState.Fault; xInitialized:=FALSE;
+END_IF
+IF fbAuto.xDone THEN
+    stStatus.udiCycleCount:=stStatus.udiCycleCount+1;
+    IF NOT stCommand.xContinuous THEN stStatus.eState:=E_MachineState.Ready; END_IF
+END_IF
+(* 十一、总许可与机构互锁筛选请求，再调用设备管理器；流程判断使用此前的反馈。 *)
+xPermit:=xSimulation AND xSafetyOK AND NOT stCommand.xStop AND (fbAlarm.udiLatched=0)
+    AND ((stStatus.eState=E_MachineState.Initializing) OR (stStatus.eState=E_MachineState.Manual)
+    OR (stStatus.eState=E_MachineState.Automatic));
+fbInterlocks(xPermit:=xPermit,stRecipe:=stActiveRecipe,aRequest:=aRequest,aStatus:=aDeviceStatus);
+aSelectedCommand:=fbInterlocks.aCommand;
+fbDevices(xEnable:=xSimulation AND xSafetyOK,xSimulation:=xSimulation,xReset:=xResetDevices,
+    stSim:=stSim,aCommand:=aSelectedCommand);
+aDeviceStatus:=fbDevices.aStatus;
+fbPlant(xEnable:=xSimulation,stSettings:=stSim,aStatus:=aDeviceStatus);
+(* 十二、集中发布状态；机械手/定长/回刀卡在哪一步，可从对应 ui...Step 追踪。 *)
+stStatus.eMode:=stCommand.eMode; stStatus.eAutoStep:=fbAuto.eStep;
+stStatus.xSimulation:=xSimulation; stStatus.xRealBackendAvailable:=FALSE;
+stStatus.xRemoteStartStopAllowed:=xAllowRemoteStartStop;
+stStatus.xInitialized:=xInitialized;
+stStatus.xReady:=xInitialized AND (stStatus.eState=E_MachineState.Ready);
+stStatus.xMaterialAtLength:=xMaterial; stStatus.xCycleComplete:=fbAuto.xDone;
+stStatus.udiAlarm:=fbAlarm.udiLatched; stStatus.uiBlockedDevice:=fbInterlocks.uiBlockedDevice;
+stStatus.uiManualReject:=fbManual.uiRejectDevice;
+stStatus.uiClearLengthStep:=fbAuto.uiClearLengthStep; stStatus.uiClearTransferStep:=fbAuto.uiClearTransferStep;
+stStatus.uiPostStep:=fbAuto.uiPostStep; stStatus.uiReturnKnifeStep:=fbAuto.uiReturnKnifeStep;
+stStatus.uiUnloadStep:=fbAuto.uiUnloadStep; stStatus.uiResetLengthStep:=fbAuto.uiResetLengthStep;
+stStatus.uiInitializeStep:=fbInitialize.uiStep; stStatus.uiActiveMaterialModel:=stActiveRecipe.uiMaterialModel;
+
+===== Device/Plc Logic/Application/04_Machine/FB_AutoCycle
+--- DECL
+(* 模块说明：自动主状态机。只组织工序并提出请求，设备执行由整机统一调用；送料等料允许长期等待。 *)
+FUNCTION_BLOCK FB_AutoCycle
+VAR_INPUT
+    xRun : BOOL; (* 自动工序运行许可，整机 Automatic 时保持 TRUE；撤销立即复位主流程。 *)
+    xContinuous : BOOL; (* TRUE 连续循环；FALSE 在当前完整循环结束后回到就绪。 *)
+    xMaterialAtLength : BOOL; (* 定长光电到位状态；自动送料须先离开再到位，并满足 D5 下降。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    eStep : E_AutoStep; (* 自动主工序当前状态，见 E_AutoStep。 *)
+    xDone : BOOL; (* 整循环完成的单扫描脉冲；机械手等三路收尾全部结束后才产生。 *)
+    xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
+    udiErrorID : UDINT; (* 非法主步骤为 4800，主步超时为 4800+枚举值；支线错误则向上传递。 *)
+    uiClearLengthStep : UINT; (* 避让支线 P 的当前步骤：10 升起 D5，20 移开 D4，1000 完成。 *)
+    uiClearTransferStep : UINT; (* 避让支线 Q 当前步骤：10 降 G4，20 松 G3，30 降 G2，1000 完成。 *)
+    uiPostStep : UINT; (* 收尾总步骤：10 抬刀，20 抬压，30 等待三路完成，1000 结束。 *)
+    uiReturnKnifeStep : UINT; (* 收尾支线 A：10 喷油，20 D2 回刀，1000 完成。 *)
+    uiUnloadStep : UINT; (* 机械手移料支线 B 步骤，10..110 每步加 10，1000 完成；详见 FB_Unload。 *)
+    uiResetLengthStep : UINT; (* 收尾支线 C：10 D4 定位，20 D5 下降，30 确认下降，1000 完成。 *)
+END_VAR
+VAR
+    ePrevStep : E_AutoStep := E_AutoStep.Fault; (* 上扫描主工序状态，用于产生步骤入口标志。 *)
+    udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
+    udiSpindleToken : UDINT; (* 盘刀运行命令序号，切割过程中保持该号，避免重复重启盘刀命令。 *)
+    xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
+    xSawSensorClear : BOOL; (* 本轮送料已观察到光电离开；须先有该标志再接受新到位，防止残留信号触发。 *)
+    tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    fbClear : FB_ClearanceUnit; (* 切割前两路并行避让流程。 *)
+    fbPost : FB_PostCut; (* 切割后抬刀、抬压及三路收尾流程。 *)
+END_VAR
+
+--- IMPL
+(* 完成标志每扫描先清零；本流程在许可撤销后复位，不保留中断点续跑。 *)
+xDone := FALSE;
+IF NOT xRun THEN eStep:=E_AutoStep.Idle; xError:=FALSE; udiErrorID:=0; xSawSensorClear:=FALSE; END_IF
+(* 进入新步骤才换新动作序号，同一步持续保持请求，防止反复启动。 *)
+xEntry := eStep <> ePrevStep;
+IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF
+ePrevStep := eStep;
+(* 送料等料不计步骤超时；其余执行步按运行配方监控。 *)
+tonStep(IN:=xRun AND NOT xEntry AND (eStep<>E_AutoStep.Idle)
+    AND (eStep<>E_AutoStep.FeedWait) AND (eStep<>E_AutoStep.Complete)
+    AND (eStep<>E_AutoStep.Fault),PT:=stRecipe.tStepTimeout);
+IF xRun AND NOT xError THEN
+CASE eStep OF
+(* 待机转入送料；没有直接跳到切割。 *)
+E_AutoStep.Idle: eStep:=E_AutoStep.FeedWait;
+(* D1 送料并正常等料；光电须先离开再到位，且 D5 必须在下降端。 *)
+E_AutoStep.FeedWait:
+    IF xEntry THEN xSawSensorClear:=FALSE; END_IF
+    IF NOT xMaterialAtLength THEN xSawSensorClear:=TRUE; END_IF
+    aCommand[1]:=F_Command(E_DeviceAction.Run,udiToken,0.0,stRecipe.lrBeltVelocity);
+    IF xSawSensorClear AND xMaterialAtLength AND F_At(aStatus[5],1.0) THEN eStep:=E_AutoStep.StopFeed; END_IF
+(* 本步不再给 D1 运行请求，整机周期清空请求后等待皮带非运行、非忙。 *)
+E_AutoStep.StopFeed:
+    IF NOT aStatus[1].xActive AND NOT aStatus[1].xBusy THEN eStep:=E_AutoStep.Push; END_IF
+(* G3 侧推到位；只认本次 udiToken 对应的完成。 *)
+E_AutoStep.Push:
+    aCommand[11]:=F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[11],udiToken) THEN eStep:=E_AutoStep.Clearance; END_IF
+(* 并行调用定长避让 P 和输送机构避让 Q，两路都完成后旋转平台。 *)
+E_AutoStep.Clearance:
+    IF fbClear.xDone THEN eStep:=E_AutoStep.Rotate; END_IF
+(* D8 旋转到 lrRotateAngle，必须在 G1 下压之前完成。 *)
+E_AutoStep.Rotate:
+    aCommand[8]:=F_Command(E_DeviceAction.Position,udiToken,stRecipe.lrRotateAngle,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[8],udiToken) THEN eStep:=E_AutoStep.PressDown; END_IF
+(* G1 下压到位。 *)
+E_AutoStep.PressDown:
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[9],udiToken) THEN eStep:=E_AutoStep.KnifeDown; END_IF
+(* G9 盘刀下降到位。 *)
+E_AutoStep.KnifeDown:
+    aCommand[17]:=F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[17],udiToken) THEN eStep:=E_AutoStep.SpindleOn; END_IF
+(* D3 盘刀开始旋转，完成序号匹配且运行反馈成立后允许走刀。 *)
+E_AutoStep.SpindleOn:
+    udiSpindleToken:=udiToken;
+    aCommand[3]:=F_Command(E_DeviceAction.Run,udiSpindleToken,0.0,stRecipe.lrSpindleVelocity);
+    IF F_Done(aStatus[3],udiSpindleToken) AND aStatus[3].xActive THEN eStep:=E_AutoStep.Cutting; END_IF
+(* 保持 D3 运行，G6 吹气，D2 走到回刀起点加切割长度；以 D2 到位作为切割完成。 *)
+E_AutoStep.Cutting:
+    aCommand[3]:=F_Command(E_DeviceAction.Run,udiSpindleToken,0.0,stRecipe.lrSpindleVelocity);
+    aCommand[14]:=F_Command(E_DeviceAction.Run,udiToken,0.0,0.0);
+    aCommand[2]:=F_Command(E_DeviceAction.Position,udiToken,stRecipe.lrCutHome+stRecipe.lrCutLength,stRecipe.lrCutVelocity);
+    IF F_Done(aStatus[2],udiToken) THEN eStep:=E_AutoStep.StopCut; END_IF
+(* 撤销 D3/G6 运行请求，等待盘刀停止且吹气关闭后收尾。 *)
+E_AutoStep.StopCut:
+    IF NOT aStatus[3].xActive AND NOT aStatus[3].xBusy AND NOT aStatus[14].xActive THEN eStep:=E_AutoStep.PostCut; END_IF
+(* 先抬刀再抬压，随后三支线同步执行；全部结束才完成本轮。 *)
+E_AutoStep.PostCut:
+    IF fbPost.xDone THEN eStep:=E_AutoStep.Complete; END_IF
+(* 只在进入本步时输出一次完成脉冲；连续模式返回送料，单循环由整机回到 Ready。 *)
+E_AutoStep.Complete:
+    xDone:=xEntry;
+    IF xContinuous THEN eStep:=E_AutoStep.FeedWait; END_IF
+(* 保留流程错误状态；整机退出自动后才复位此流程。 *)
+E_AutoStep.Fault: xError:=TRUE;
+ELSE xError:=TRUE; udiErrorID:=4800;
+END_CASE
+IF tonStep.Q THEN xError:=TRUE; udiErrorID:=4800+TO_UDINT(eStep); END_IF
+END_IF
+(* 子功能块必须每扫描调用，包括失能时复位；上方状态判断看到的是此前反馈。 *)
+fbClear(xExecute:=xRun AND (eStep=E_AutoStep.Clearance),stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+fbPost(xExecute:=xRun AND (eStep=E_AutoStep.PostCut),stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
+(* 任一支线错误向主流程上报；所有设备请求还须经过整机统一互锁。 *)
+IF fbClear.xError OR fbPost.xError THEN xError:=TRUE; udiErrorID:=MAX(fbClear.udiErrorID,fbPost.udiErrorID); END_IF
+IF xError THEN eStep:=E_AutoStep.Fault; END_IF
+uiClearLengthStep:=fbClear.uiLengthStep; uiClearTransferStep:=fbClear.uiTransferStep;
+uiPostStep:=fbPost.uiStep; uiReturnKnifeStep:=fbPost.uiKnifeStep;
+uiUnloadStep:=fbPost.uiUnloadStep; uiResetLengthStep:=fbPost.uiLengthStep;
+
+===== Device/Plc Logic/Application/04_Machine/FB_Interlocks
+--- DECL
+(* 模块说明：对手动、初始化和自动请求统一执行软件互锁。禁止动作时改为停止，并报告最后一个被阻挡设备。 *)
+FUNCTION_BLOCK FB_Interlocks
+VAR_INPUT
+    xPermit : BOOL; (* 整机当前允许发出动作的总许可；仍需继续满足各设备互锁。 *)
+    stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
+    aRequest : ARRAY[1..17] OF ST_DeviceCommand; (* 初始化/手动/自动产生的原始请求，每周期先清空，再交互锁筛选。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+END_VAR
+VAR_OUTPUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    uiBlockedDevice : UINT; (* 本扫描最后一个被互锁阻挡的设备索引；0 表示无阻挡，可结合设备状态排查。 *)
+END_VAR
+VAR
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+    xAllowed : BOOL; (* 当前遍历设备的最终互锁允许结果。 *)
+    xMotion : BOOL; (* 当前请求是否为点动或离开当前位置的定位，决定是否检查机构避让。 *)
+    xKnifeUp : BOOL; (* G9 刀具处于提升端且设备无忙无故障。 *)
+    xPressUp : BOOL; (* G1 下压机构处于抬起端且设备无忙无故障。 *)
+    xClampOpen : BOOL; (* G8 夹爪处于打开端且设备无忙无故障。 *)
+END_VAR
+
+--- IMPL
+(* 以下为普通程序互锁；实际急停、门锁、失气等安全功能须由最终硬件方案实现。 *)
+uiBlockedDevice:=0;
+xKnifeUp:=F_At(aStatus[17],0.0); xPressUp:=F_At(aStatus[9],0.0);
+xClampOpen:=F_At(aStatus[16],0.0);
+FOR i:=1 TO 17 DO
+    aCommand[i]:=aRequest[i];
+    xAllowed:=xPermit AND (i<>6);
+    xMotion:=(aRequest[i].eAction=E_DeviceAction.Jog) OR
+        ((aRequest[i].eAction=E_DeviceAction.Position) AND
+        (ABS(aRequest[i].lrTarget-aStatus[i].lrPosition)>0.01));
+    IF xMotion THEN
+        CASE i OF
+        (* D4 平移之前，D5 定长升降必须已经升起。 *)
+        4: xAllowed:=xAllowed AND F_At(aStatus[5],0.0);
+        (* D8 平台旋转之前，盘刀和下压抬起、G3 侧推解除。 *)
+        8: xAllowed:=xAllowed AND xKnifeUp AND xPressUp AND F_At(aStatus[11],0.0);
+        (* G1 下压时，平台不得旋转，盘刀抬起且 D2 在回刀起点。 *)
+        9:
+            IF aRequest[i].lrTarget>0.5 THEN
+                xAllowed:=xAllowed AND NOT aStatus[8].xBusy AND xKnifeUp AND F_At(aStatus[2],stRecipe.lrCutHome);
+            END_IF
+        (* G9 下刀时，下压到位、旋转停止、定长升起、流利条下降、侧挡下降。 *)
+        17:
+            IF aRequest[i].lrTarget>0.5 THEN
+                xAllowed:=xAllowed AND F_At(aStatus[9],1.0) AND NOT aStatus[8].xBusy
+                    AND F_At(aStatus[5],0.0) AND F_At(aStatus[12],0.0) AND F_At(aStatus[10],1.0);
+            END_IF
+        (* D2 正向切割需下压和盘刀下降到位且盘刀运行；回刀需盘刀抬起。 *)
+        2:
+            IF ((aRequest[i].eAction=E_DeviceAction.Position) AND (aRequest[i].lrTarget>stRecipe.lrCutHome+0.01))
+               OR ((aRequest[i].eAction=E_DeviceAction.Jog) AND (aRequest[i].lrVelocity>0.0)) THEN
+                xAllowed:=xAllowed AND F_At(aStatus[9],1.0) AND F_At(aStatus[17],1.0) AND aStatus[3].xActive;
+            ELSE xAllowed:=xAllowed AND xKnifeUp;
+            END_IF
+        (* D7 机械手分点动、拉料、抬升平移与下降回位分别校验，保持后退/下降/回位顺序。 *)
+        7:
+            xAllowed:=xAllowed AND xKnifeUp AND xPressUp;
+            IF aRequest[i].eAction=E_DeviceAction.Jog THEN
+                xAllowed:=xAllowed AND F_At(aStatus[15],1.0) AND xClampOpen;
+            ELSIF ABS(aRequest[i].lrTarget-stRecipe.lrGripperHome)<0.01 THEN
+                xAllowed:=xAllowed AND F_At(aStatus[15],0.0) AND xClampOpen;
+            ELSIF ABS(aRequest[i].lrTarget-stRecipe.lrGripperPull)<0.01 THEN
+                xAllowed:=xAllowed AND F_At(aStatus[15],1.0) AND F_At(aStatus[16],1.0);
+            ELSE xAllowed:=xAllowed AND F_At(aStatus[15],1.0) AND xClampOpen;
+            END_IF
+        END_CASE
+    END_IF
+    (* 互锁不满足则用 Stop 覆盖该设备请求；记录最后一个被阻挡编号，便于排查。 *)
+    IF NOT xAllowed THEN
+        IF aRequest[i].eAction<>E_DeviceAction.None THEN uiBlockedDevice:=INT_TO_UINT(i); END_IF
+        aCommand[i].eAction:=E_DeviceAction.Stop;
+    END_IF
+END_FOR
+
+===== Device/Plc Logic/Application/04_Machine/FB_PanelInput
+--- DECL
+(* 模块说明：每扫描先读取实体面板或仿真面板，形成唯一的本地命令来源。上位机不能修改此处的模式。 *)
+FUNCTION_BLOCK FB_PanelInput
+VAR_INPUT
+    xSimulation : BOOL; (* TRUE 使用内部仿真；当前 FALSE 报未实现 3001，不会接管真实运动。 *)
+    stReal : ST_PanelInputs; (* 从物理 I/O 映射得到的标准化面板输入，当前未分配端子地址。 *)
+    stSim : ST_PanelInputs; (* 仿真用面板输入，代替尚未连接的实体旋钮和按钮。 *)
+    xContinuous : BOOL; (* TRUE 连续循环；FALSE 在当前完整循环结束后回到就绪。 *)
+END_VAR
+VAR_OUTPUT
+    stCommand : ST_OperatorCommand; (* 由本地面板生成的命令，模式仅由 xAutoMode 形成。 *)
+END_VAR
+VAR
+    stSelected : ST_PanelInputs; (* 本扫描选中的实体/仿真面板输入快照。 *)
+END_VAR
+
+--- IMPL
+(* 这里只处理已归一化的逻辑信号；端子、常开/常闭和必要的输入滤波在实际 I/O 映射时确定。 *)
+IF xSimulation THEN stSelected:=stSim;
+ELSE stSelected:=stReal; END_IF
+(* 默认手动，只有本地旋钮明确选择自动才转自动；急停反馈不混入普通停止按钮。 *)
+stCommand.eMode:=E_MachineMode.Manual;
+IF stSelected.xAutoMode THEN stCommand.eMode:=E_MachineMode.Automatic; END_IF
+stCommand.xInitialize:=stSelected.xInitialize;
+stCommand.xStart:=stSelected.xStart;
+stCommand.xStop:=stSelected.xStop;
+stCommand.xResetAlarm:=stSelected.xResetAlarm;
+stCommand.xContinuous:=xContinuous;
+
+===== Device/Plc Logic/Application/04_Machine/FB_AlarmManager
+--- DECL
+(* 模块说明：锁存首次非零报警。只有复位有效且当前没有新报警时清除；同一扫描有新报警时仍会锁存。 *)
+FUNCTION_BLOCK FB_AlarmManager
+VAR_INPUT
+    udiIncoming : UDINT; (* 当前扫描的新报警码；0 表示当前未提出报警。 *)
+    xReset : BOOL; (* 故障复位许可；仿真设备仅在故障注入已撤销时清除错误。 *)
+END_VAR
+VAR_OUTPUT
+    udiLatched : UDINT; (* 已锁存的首个非零报警码；后续报警不覆盖，满足复位条件后清零。 *)
+END_VAR
+
+--- IMPL
+(* 只有没有当前报警原因才清锁存；当前代码保留第一个非零报警，后续报警不覆盖。 *)
+IF xReset AND (udiIncoming=0) THEN udiLatched:=0; END_IF
+IF (udiLatched=0) AND (udiIncoming<>0) THEN udiLatched:=udiIncoming; END_IF
+
+===== Device/Plc Logic/Application/04_Machine/FB_ManualControl
+--- DECL
+(* 模块说明：将手动按钮转为统一设备请求。点动松开即取消；定位请求保持到本次动作完成；D6 不调度。 *)
+FUNCTION_BLOCK FB_ManualControl
+VAR_INPUT
+    xEnable : BOOL; (* 手动模式且按钮释放联锁已满足时允许；未使能也同步按钮快照。 *)
+    aManual : ARRAY[1..17] OF ST_ManualCommand; (* 各设备手动请求，索引 1..17；进入手动后先释放所有按钮再允许动作。 *)
+END_VAR
+VAR_IN_OUT
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+END_VAR
+VAR_OUTPUT
+    uiRejectDevice : UINT; (* 本扫描最后一个手动拒绝设备索引；0 无，常见原因是冲突按钮或不支持该动作。 *)
+END_VAR
+VAR
+    aPrev : ARRAY[1..17] OF ST_ManualCommand; (* 上扫描手动按钮快照；即使禁用仍更新，防止按住按钮切模式后被误作新上升沿。 *)
+    aPending : ARRAY[1..17] OF ST_DeviceCommand; (* 手动定位的锁存请求，直到本次命令完成；点动或运行优先时清除。 *)
+    aRunID : ARRAY[1..17] OF UDINT; (* 各设备按住运行/点动时保持的序号，按钮释放后归零。 *)
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+    lrVelocity : LREAL; (* 本扫描限幅后的手动速度，取绝对值限幅 0.1..100；反向点动时变为负值。 *)
+END_VAR
+
+--- IMPL
+(* 每扫描重新判断按钮冲突；无合法请求的设备由整机统一撤销动作。 *)
+uiRejectDevice:=0;
+FOR i:=1 TO 17 DO
+    IF NOT xEnable THEN
+        aPending[i].eAction:=E_DeviceAction.None;
+        aRunID[i]:=0;
+    ELSIF i<>6 THEN
+        lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),100.0);
+        IF (aManual[i].xJogPositive AND aManual[i].xJogNegative)
+           OR ((aManual[i].xJogPositive OR aManual[i].xJogNegative) AND (aManual[i].xMove OR aManual[i].xRun))
+           OR (aManual[i].xMove AND aManual[i].xRun) THEN
+            uiRejectDevice:=INT_TO_UINT(i); aPending[i].eAction:=E_DeviceAction.None;
+        (* 点动电平控制，只支持 D2/D4/D5/D7/D8；速度符号决定方向，松开后不保持点动。 *)
+        ELSIF aManual[i].xJogPositive OR aManual[i].xJogNegative THEN
+            aPending[i].eAction:=E_DeviceAction.None;
+            IF aRunID[i]=0 THEN aRunID[i]:=F_NextID(udiCounter); END_IF
+            IF aManual[i].xJogNegative THEN lrVelocity:=-lrVelocity; END_IF
+            IF (i=2) OR (i=4) OR (i=5) OR (i=7) OR (i=8) THEN
+                aCommand[i]:=F_Command(E_DeviceAction.Jog,aRunID[i],0.0,lrVelocity);
+            ELSE uiRejectDevice:=INT_TO_UINT(i);
+            END_IF
+        (* 连续运行电平控制，仅允许皮带、盘刀、喷油和吹气。 *)
+        ELSIF aManual[i].xRun THEN
+            aPending[i].eAction:=E_DeviceAction.None;
+            IF (i=1) OR (i=3) OR (i=13) OR (i=14) THEN
+                IF aRunID[i]=0 THEN aRunID[i]:=F_NextID(udiCounter); END_IF
+                aCommand[i]:=F_Command(E_DeviceAction.Run,aRunID[i],0.0,lrVelocity);
+            ELSE uiRejectDevice:=INT_TO_UINT(i);
+            END_IF
+        ELSE
+            aRunID[i]:=0;
+            (* 定位仅在按钮上升沿锁存目标和序号，然后持续等待本次完成。 *)
+            IF aManual[i].xMove AND NOT aPrev[i].xMove THEN
+                IF (i<>1) AND (i<>3) AND (i<>13) AND (i<>14) THEN
+                    aPending[i]:=F_Command(E_DeviceAction.Position,F_NextID(udiCounter),aManual[i].lrTarget,lrVelocity);
+                ELSE uiRejectDevice:=INT_TO_UINT(i);
+                END_IF
+            END_IF
+            IF aPending[i].eAction<>E_DeviceAction.None THEN
+                aCommand[i]:=aPending[i];
+                IF F_Done(aStatus[i],aPending[i].udiID) THEN aPending[i].eAction:=E_DeviceAction.None; END_IF
+            END_IF
+        END_IF
+    END_IF
+    (* 禁用时仍同步按钮快照，避免按住定位按钮切入手动后产生虚假的新上升沿。 *)
+    aPrev[i]:=aManual[i];
+END_FOR
+
+===== Device/Plc Logic/Application/05_Communication/FB_ModbusInterface
+--- DECL
+(* 模块说明：Modbus 协议 v2：只解析可选的远程启动/停止，发布整机状态。模式只读；参数映射另行配置。 *)
+FUNCTION_BLOCK FB_ModbusInterface
+VAR_INPUT
+    xEnable : BOOL; (* 通信解析许可；首次使能只记录现有序号，防止重放旧命令。 *)
+    stStatus : ST_MachineStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
+    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+END_VAR
+VAR_IN_OUT
+    awRx : ARRAY[0..31] OF WORD; (* v2 接收字：0=版本2，1=序号，2=命令2启动/3停止；3/4 保留且必须为0，不接受模式写入。 *)
+    awTx : ARRAY[0..127] OF WORD; (* 发布字缓冲区 0..127；包含确认、状态、报警、计数和位置，详见程序内索引注释。 *)
+END_VAR
+VAR_OUTPUT
+    xRequest : BOOL; (* 解析到一帧合法新命令时给整机的单扫描请求。 *)
+    wRequestSequence : WORD; (* 解析出的新命令序号，供整机处理后原样确认。 *)
+    stCommand : ST_RemoteCommand; (* 合法新帧产生的单扫描远程启停请求，没有模式字段。 *)
+    uiParseResult : UINT; (* 帧格式检查结果：0 合法，2 版本/模式/命令码不合法，非法帧不下发。 *)
+END_VAR
+VAR
+    aSnapshot : ARRAY[0..31] OF WORD; (* 新命令帧快照，读取后再次核对序号，降低写入过程中读取半帧的风险。 *)
+    wLastSeen : WORD; (* 已观察过的帧序号，包含非法帧；相同序号不会重复处理。 *)
+    xWasEnabled : BOOL; (* 上扫描通信使能状态；首次使能只记录序号，不执行缓冲区旧命令。 *)
+    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+END_VAR
+
+--- IMPL
+(* 每扫描清除远程启停脉冲；模式、初始化、复位不属于远程命令。 *)
+xRequest:=FALSE;
+stCommand.xStart:=FALSE;
+stCommand.xStop:=FALSE;
+IF NOT xEnable OR NOT xWasEnabled THEN
+    (* 首次启用仅记录当前序号，避免重新连接时执行缓冲区遗留命令。 *)
+    wLastSeen:=awRx[1];
+ELSIF (awRx[1]<>0) AND (awRx[1]<>wLastSeen) THEN
+    (* v2：0=版本2，1=新序号，2=命令2启动/3停止，3/4 必须0；旧版或带模式的帧被拒绝。 *)
+    aSnapshot:=awRx;
+    IF aSnapshot[1]=awRx[1] THEN
+        wLastSeen:=aSnapshot[1]; wRequestSequence:=aSnapshot[1]; uiParseResult:=0;
+        IF (aSnapshot[0]<>2) OR (aSnapshot[3]<>0) OR (aSnapshot[4]<>0)
+           OR ((aSnapshot[2]<>2) AND (aSnapshot[2]<>3)) THEN
+            uiParseResult:=2;
+        ELSE
+            (* 合法新帧只产生启停请求，实际接受还须整机检查本地授权、旋钮模式及状态。 *)
+            CASE aSnapshot[2] OF
+            2: stCommand.xStart:=TRUE;
+            3: stCommand.xStop:=TRUE;
+            END_CASE
+            xRequest:=TRUE;
+        END_IF
+    END_IF
+END_IF
+xWasEnabled:=xEnable;
+(* 发布缓冲区是只读反馈，实际寄存器地址与参数下发映射尚未接入。 *)
+FOR i:=0 TO 127 DO awTx[i]:=0; END_FOR
+(* 0=协议版本2；1=整机处理序号；2=处理结果。 *)
+awTx[0]:=2; awTx[1]:=stStatus.wRemoteAckSequence; awTx[2]:=UINT_TO_WORD(stStatus.uiRemoteResult);
+(* 3=整机状态；4=自动主步骤。 *)
+awTx[3]:=TO_WORD(stStatus.eState); awTx[4]:=TO_WORD(stStatus.eAutoStep);
+(* 5/6=报警低字/高字；7/8=循环计数低字/高字。 *)
+awTx[5]:=UDINT_TO_WORD(stStatus.udiAlarm); awTx[6]:=UDINT_TO_WORD(SHR(stStatus.udiAlarm,16));
+awTx[7]:=UDINT_TO_WORD(stStatus.udiCycleCount); awTx[8]:=UDINT_TO_WORD(SHR(stStatus.udiCycleCount,16));
+(* 9=仿真；10=已初始化；11=料到位；12=运行料型。 *)
+awTx[9]:=BOOL_TO_WORD(stStatus.xSimulation); awTx[10]:=BOOL_TO_WORD(stStatus.xInitialized);
+awTx[11]:=BOOL_TO_WORD(stStatus.xMaterialAtLength); awTx[12]:=UINT_TO_WORD(stStatus.uiActiveMaterialModel);
+(* 13=解析器观察序号；14=格式结果0合法/2非法；15=实体旋钮模式0手动/1自动；16=远程启停授权。 *)
+awTx[13]:=wRequestSequence; awTx[14]:=UINT_TO_WORD(uiParseResult);
+awTx[15]:=TO_WORD(stStatus.eMode);
+awTx[16]:=BOOL_TO_WORD(stStatus.xRemoteStartStopAllowed);
+(* awTx[32..48]：设备 1..17 位置，按 0.1 工程单位缩放，解读为有符号 INT。 *)
+FOR i:=1 TO 17 DO awTx[31+i]:=INT_TO_WORD(LREAL_TO_INT(aStatus[i].lrPosition*10.0)); END_FOR
+
+===== Device/Plc Logic/Application/GVL_Motion
+--- DECL
+(* 模块说明：旧单轴 Demo 的操作和监控变量。新切割机框架不使用这些变量；旧 Demo 当前未挂周期任务。 *)
+VAR_GLOBAL
+    (* 旧 Demo 操作命令：仅供单轴测试，新整机流程不使用。 *)
+    xEnable     : BOOL; (* 旧 Demo 的 Axis_1 伺服使能请求，TRUE 上使能，FALSE 关闭。 *)
+    xReset      : BOOL; (* 旧 Demo 轴故障复位请求，接 MC_Reset.Execute。 *)
+    xStop       : BOOL; (* 旧 Demo 停止请求；停止完成后释放锁定，再决定是否重新启动。 *)
+    xJogFwd     : BOOL; (* 历史正向点动入口，当前旧 Demo 正文未接入。 *)
+    xJogRev     : BOOL; (* 历史反向点动入口，当前旧 Demo 正文未接入。 *)
+    xMoveRel    : BOOL; (* 历史相对定位入口，当前旧 Demo 正文未接入。 *)
+    xMoveAbs    : BOOL; (* 历史绝对定位入口，当前旧 Demo 正文未接入。 *)
+    xStartCycle : BOOL; (* 旧 Demo 单次往返启动，上升沿有效；当前 Demo 未周期调用。 *)
+
+    rRelDist    : LREAL := 100.0; (* 历史单次相对距离 mm，当前往返正文不采用该参数。 *)
+    rTargetPos  : LREAL := 0.0; (* 历史绝对目标位置 mm，当前往返正文不采用该参数。 *)
+
+    (* 旧 Demo 运动参数：实际采用及限幅见各参数同行说明。 *)
+    rJogVel     : LREAL := 10.0; (* 历史点动速度 mm/s，当前往返正文不采用该参数。 *)
+    rVel        : LREAL := 30.0; (* 旧 Demo 往返速度 mm/s，正文限幅为 1..10。 *)
+    rAcc        : LREAL := 200.0; (* 旧 Demo 加速度 mm/s²，正文限幅为 10..200。 *)
+    rDec        : LREAL := 200.0; (* 旧 Demo 减速度 mm/s²，正文限幅为 10..200。 *)
+    rStroke     : LREAL := 100.0; (* 旧 Demo 请求的单程距离 mm，正文使用绝对值并限制最大 20。 *)
+    tDwell      : TIME  := T#1S; (* 旧 Demo 每个行程端点停留时间。 *)
+
+    (* 旧 Demo 运行反馈：仅在旧程序被调用时更新。 *)
+    xPowered    : BOOL; (* MC_Power.Status，伺服已使能反馈。 *)
+    xAxisReady  : BOOL; (* 旧 Demo 中由已使能、非忙、无错误组合得到的可用标志。 *)
+    xBusy       : BOOL; (* 往返功能块或停止功能块正忙。 *)
+    xDisabled   : BOOL; (* 旧 Demo 根据未使能得到的显示状态。 *)
+    xStandStill : BOOL; (* 旧 Demo 根据已使能且非忙得到的显示状态，不是独立轴状态读取。 *)
+    xStopping   : BOOL; (* 停止功能块正在执行。 *)
+    xErrorStop  : BOOL; (* 旧 Demo 综合错误显示，与 xAxisError 同步。 *)
+    xAxisError  : BOOL; (* 使能、往返、复位或停止功能块任一报错。 *)
+    iAxisErrorID: DWORD; (* 历史错误码显示变量，当前正文未更新，需读取实际功能块 ErrorID。 *)
+    rActPos     : LREAL; (* MC_ReadActualPosition 返回的 Axis_1 实际位置，单位 mm。 *)
+    iState      : INT; (* 旧 Demo 当前 iCycle 步骤镜像，便于在线监控。 *)
+END_VAR
+
+--- IMPL
+
+===== Device/Plc Logic/Application/PLC_PRG
+--- DECL
+(* 模块说明：周期入口：先解码实体面板，再解析通信、调度整机、发布反馈和映射逻辑输出，仅在 ETHERCAT1 调用一次。 *)
+PROGRAM PLC_PRG
+VAR
+    fbPanel : FB_PanelInput; (* 实体/仿真面板解码实例，须先于通信和整机调度调用。 *)
+    fbCommunication : FB_ModbusInterface; (* 通信命令解析和状态打包实例；打包的是上一扫描已发布的整机反馈。 *)
+    fbMachine : FB_Machine; (* 整机调度实例，包含初始化、手动、自动、互锁、报警和设备管理。 *)
+    fbIO : FB_IOMap; (* 逻辑 I/O 映射实例，当前只形成诊断需求，不驱动真实输出。 *)
+END_VAR
+
+--- IMPL
+(* 本程序只在 ETHERCAT1 中周期调用一次；内部功能块沿本调用链每扫描执行。 *)
+(* 先解码实体/仿真面板；模式旋钮为唯一模式来源，随后发布到只读监控接口。 *)
+fbPanel(xSimulation:=GVL_Parameters.xSimulation,stReal:=GVL_IO.stPanelInputs,
+    stSim:=GVL_Simulation.stPanelInputs,xContinuous:=GVL_Parameters.xContinuous);
+GVL_Interface.stPanel:=fbPanel.stCommand;
+(* 1. 解析上位机新命令并打包上一扫描状态，供本扫描整机处理。 *)
+fbCommunication(xEnable:=GVL_Modbus.xEnable,stStatus:=GVL_Interface.stStatus,
+    aStatus:=GVL_Interface.aDeviceStatus,awRx:=GVL_Modbus.awRx,awTx:=GVL_Modbus.awTx);
+(* 2. 整机选择操作来源，调度工序，通过互锁后统一调用设备。 *)
+fbMachine(xSimulation:=GVL_Parameters.xSimulation,stPanel:=GVL_Interface.stPanel,
+    stRemote:=fbCommunication.stCommand,xRemoteRequest:=fbCommunication.xRequest,
+    xAllowRemoteStartStop:=GVL_Parameters.xAllowRemoteStartStop,
+    wRemoteSequence:=fbCommunication.wRequestSequence,aManual:=GVL_Interface.aManual,
+    stRecipe:=GVL_Parameters.stRecipe,stSim:=GVL_Simulation.stSettings,
+    xRealSafetyOK:=GVL_IO.xSafetyOK,xRealMaterial:=GVL_IO.xMaterialAtLength);
+(* 3. 将整机反馈发布到监控接口，建议调试时从这里查看主步骤和支线步骤。 *)
+GVL_Interface.stStatus:=fbMachine.stStatus;
+GVL_Interface.aDeviceStatus:=fbMachine.aDeviceStatus;
+(* 4. 形成逻辑输出需求；此版本尚未映射真实 I/O。 *)
+fbIO(uiMaterialModel:=fbMachine.stStatus.uiActiveMaterialModel,aCommand:=fbMachine.aSelectedCommand,
+    aStatus:=fbMachine.aDeviceStatus,
+    axOutputs:=GVL_IO.axDigitalOutputs,axG2RelayDemand:=GVL_IO.axG2RelayDemand);

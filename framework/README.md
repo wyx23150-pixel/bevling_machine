@@ -1,6 +1,6 @@
 # 切割机框架使用说明
 
-版本：2026-10-21，按流程图 v0.3 搭建，控制权限调整为实体面板决定模式。
+版本：2026-10-28，按流程图 v0.3 搭建，控制权限调整为实体面板决定模式；D2/D4 已接入真实伺服轴，其余设备仍走仿真。
 
 ## 控制来源
 
@@ -24,13 +24,14 @@
 - 原任务中的 `PLC_PRG` 调用保持在 `ETHERCAT1` 下，不增加第二个调用。
 - 原试轴程序保存为 `90_Legacy/PRG_AxisDemo`，没有周期调用。
 - `GVL_Motion` 仅供旧 Demo 使用，新入口不引用它。
-- 实机适配、真实 I/O 地址、硬件安全回路接口和 Modbus 网络映射尚未接入。
-- `GVL_Parameters.xSimulation = FALSE` 会报未实现错误 3001，不会转入真实设备控制。
+- 实机适配（仅 D2/D4）、真实 I/O 地址、硬件安全回路接口和 Modbus 网络映射尚未全部接入。
+- `GVL_Parameters.xSimulation = FALSE` 会报未实现错误 3001，不会转入真实设备控制。**混跑时它必须保持 TRUE**：真实设备靠 `GVL_RealDevice.stSettings.axRealDevice[1..17]` 逐台接管，详见下一节。
 - `GVL_IO.axDigitalOutputs` 为未映射的普通 BOOL 数组，当前每周期置 FALSE。
 
 2026-10-15 框架逻辑版本的原生编译：0 错误、2 条警告（原有 CmpLog 日志库未加载、MainTask 未定义 POU）。
+2026-10-28 接入 D2/D4 真实轴后重做 clean + build：同样 0 错误、同样 2 条警告，无新增告警。
 已通过一次负向编译探针确认错误可以正确返回；探针已移除并重新编译、保存。
-48 个框架对象的工程回读与本地源码一致。未登录、下载或运行物理 PLC，尚未执行循环运行验证。
+56 个代码对象的工程回读与本地源码一致。未登录、下载或运行物理 PLC，尚未执行循环运行验证，**真实轴也尚未上电试动**。
 设备仿真为软件模型。位置动作默认在约 500 ms 完成，用于检查流程等待，不代表真实速度、加速度或机械响应。
 默认位置、速度、时间是仿真示例，不是已调试的生产参数。
 
@@ -48,7 +49,7 @@
 | `90_Legacy` | `PRG_AxisDemo` | 原单轴 Demo，未调用 |
 
 `sources/` 是对应的可审阅 ST 文本，`manifest.json` 保存对象类型、路径、声明和实现。
-当前导出共 52 个代码对象，新增实体面板输入类型、远程启停类型及面板解码功能块。
+当前导出共 56 个代码对象（2026-10-28 新增 `ST_RealDeviceSettings`、`GVL_RealDevice`、`F_SafetyBypassActive`、`FB_RealAxis`）。
 `build_sources.py` 仅生成本地源文件，不会自行修改 IDE 或连接 PLC。
 `comments_zh.py` 为生成结果补充模块、变量和工序的中文说明，重新生成时会保留这些注释。
 工程由 MCP 的创建对象、设置代码工具导入。
@@ -66,6 +67,7 @@
 4. 动作不完成时，看 `uiBlockedDevice` 及 `aDeviceStatus[设备索引]` 的忙、故障、位置和命令序号。
 5. `udiAcceptedID` 是设备已接收序号，`udiCompletedID` 是已完成序号；应与当前步骤的 `udiToken` 配合判断。
 6. 旧程序中的保留变量会注明“未引用”或“未更新”，避免把历史变量误当成有效调试入口。
+7. 真实轴问题先看 `GVL_RealDevice.stSettings` 的开关状态，再看 `FB_RealAxis` 的 `uiVerifyPhase` 与 `aDeviceStatus[2]/[4].udiErrorID`；4xxxx 说明是 MC 层报错，低 16 位就是原码。
 
 ## 状态与操作入口
 
@@ -100,15 +102,15 @@
 输入位于 `GVL_Interface.aManual[设备索引]`，反馈位于 `aDeviceStatus[设备索引]`。
 进入手动后先释放全部手动按钮，再允许动作，避免切模式时接续旧的按住命令。
 
-- 轴：按住 `xJogPositive` 或 `xJogNegative` 点动，松开停止；速度取 `lrVelocity`。
+- 轴：按住 `xJogPositive` 或 `xJogNegative` 点动，松开停止；速度取 `lrVelocity`，真实设备再被 `lrVerifyVelocity` 限幅（默认 2.0，写更大也无效）。
+  `FB_ManualControl` 每扫描先撤销该设备请求再按按钮重写，所以松开即撤销，不会残留上一扫描的点动。
 - 轴或气缸：设置 `lrTarget`，给 `xMove` 上升沿，发出一次定位/动作请求。
 - 连续电机或阀：`xRun` 按住运行，松开停止。
 - 气缸的仿真目标通常是 0 / 1。具体方向见编号表。
 - 相反点动同时有效、点动和定位同时有效等冲突会被拒绝；查看 `stStatus.uiManualReject`。
-- 手动也经过 `FB_Interlocks`。阻挡设备可查看 `stStatus.uiBlockedDevice`。
-
-主要互锁包括：定长平移前先抬起；平台旋转前刀具和下压抬起、侧推解除；下刀前下压到位且相关机构移开；走刀前刀具和下压到位、盘刀运行；机械手按抬升/夹紧/后退/下降/回位关系执行。
-这些是框架中的软件条件，仍须结合最终机械结构补充和验证。
+- **手动模式当前不做机构互锁**（`FB_Interlocks` 收到 `xManualMode` 为 TRUE 时整段跳过），单轴可以独立动作；`stStatus.uiBlockedDevice` 在手动下恒为 0。
+  互锁只约束自动流程，主要内容：定长平移前先抬起；平台旋转前刀具和下压抬起、侧推解除；下刀前下压到位且相关机构移开；走刀前刀具和下压到位、盘刀运行；机械手按抬升/夹紧/后退/下降/回位关系执行。
+  这些是框架中的软件条件，仍须结合最终机械结构补充和验证。手动下的硬干涉（D5 挡 D4 行程、平台旋转扫刀等）后续按调试情况逐条补回。
 
 ## 设备索引
 
@@ -133,6 +135,72 @@
 | 17 | G9 | 盘刀升降；0=提升，1=下降 |
 
 `GVL_DeviceIds` 提供对应常量。G2 的三个逻辑继电器需求在 `GVL_IO.axG2RelayDemand[1..3]`，对应 300、400、600 料型，当前均未绑定实际输出。
+
+## 真实轴接管（D2 / D4）
+
+混跑设计：整机基准仍是仿真，真实设备按编号逐台接管。**`xSimulation` 不要改成 FALSE**，否则 `FB_Machine` 会立刻报 3001 并进 Fault，连手动都进不去。
+
+| 项 | 内容 |
+|---|---|
+| D2 切割走刀 | `Axis_1`，汇川 SV660N，`InoSV660N` 从站 |
+| D4 定长平移 | `ASDA_E3_1`，台达 ASDA-B3-E，`ASDA_B3_E_CoE_Drive` 从站 |
+| 其余 15 台 | 继续 `FB_SimDevice` / `FB_Axis` / `FB_Motor` / `FB_Cylinder` / `FB_Valve` |
+| 设置入口 | `GVL_RealDevice.stSettings`（类型 `ST_RealDeviceSettings`） |
+| 适配功能块 | `FB_RealAxis`，每个真实轴一个实例，在 `FB_DeviceManager` 中无条件调用 |
+
+开关与默认值（全部默认 FALSE，行为与纯仿真逐语句一致）：
+
+| 字段 | 默认 | 作用 |
+|---|---|---|
+| `axRealDevice[1..17]` | 全 FALSE | 逐台接管。本版本只认 2 和 4，其它编号置 TRUE 会在该设备状态上报 3002 |
+| `xRelativeVerify` | FALSE | 相对验证模式，把定位命令解释为「+d → 停留 → −d」往返 |
+| `xInterlockBypass` | FALSE | **预留字段**：手动模式已默认不做机构互锁，本开关当前不影响任何判定；后续给手动按需补互锁时再用 |
+| `xSafetyBypass` + `xSafetyBypassConfirm` | 全 FALSE | 两级安全旁路，必须同时为 TRUE 才生效（`F_SafetyBypassActive`） |
+| `xUseRealMaterial` | FALSE | TRUE 才用真实定长光电，默认仍由 `FB_SimPlant` 产生来料 |
+| `lrVerifyDistance` / `Velocity` / `Acceleration` / `Deceleration` | 1.0 / 2.0 / 50.0 / 50.0 | 验证用的低速小加速度；速度同时作为真实设备的手动速度上限 |
+| `tVerifyDwell` | 500 ms | 往返之间的停留，保证 Execute 拉低至少一个扫描 |
+| `lrVerifyMeasuredByHand` | 0.0 | 人工用百分表量到的实际位移，用于核对轴单位 |
+
+`FB_RealAxis` 的错误码（与原有 2xxx / 4xxxx 不冲突）：
+
+| 码 | 含义 |
+|---|---|
+| 2001 | 速度非法或目标超软限位（沿用仿真语义） |
+| 2002 | 真实轴未允许绝对定位（`ST_DeviceConfig.xAbsoluteAllowed = FALSE`），未回零时必现 |
+| 2003 | 命令已接收但轴 3 秒未使能 |
+| 2005 | 相对验证往返中途被中止 |
+| 3002 | 该编号被请求接管但本版本未支持 |
+| 40000 + MC 错误码 | 任一 MC 功能块报错，低 16 位保留原码便于查手册 |
+
+### 未回零怎么试（重要）
+
+`FB_Initialize` 第 30 步对 D2/D4 发的是**绝对定位**（`lrCutHome` / `lrLengthPosition`），未回零的轴被命令去 100 mm 是最危险的动作。处理方式是不改 `FB_Initialize`，把「Position 在真实轴上代表什么」下沉到 `FB_RealAxis`：
+
+- `xRelativeVerify = FALSE` → 真实轴拒绝 Position，报 2002，初始化在第 30 步超时，起到明确阻止作用；
+- `xRelativeVerify = TRUE` → 把这条 Position 解释为「+`lrVerifyDistance` → 停留 → −`lrVerifyDistance`」，走完仍回写**同一个 udiToken**，上层 `F_Done` 语义不变，往返后回到原点；
+- 此模式下 `FB_Machine` 拒绝进自动（`uiRemoteResult = 4`），因为绝对位置是「假」的。
+
+`lrVerifyRatio = 实测/指令` 只能证明「指令与反馈自洽」，**不能证明 1 个单位 = 1 mm**。轴单位若被错设成「转」，比值仍是 1.0 却实际走了 10 mm。真实比例必须用外部量具：命令走 1.000，用百分表读实际位移。
+
+### 首轮调试顺序（每步都能独立验证）
+
+1. `axRealDevice[2] := TRUE`，旁路全关 → 应出现 **1001**，`fbRealD2` 完全不动。这步不过，后面一律不做。
+2. 打开 `xSafetyBypass` + `xSafetyBypassConfirm` → `xSafetyBypassed = TRUE`、`uiSafetySource = 2`，1001 清除，伺服使能。
+3. 手动模式 D4 负向点动 1 s（2 mm/s）→ 位置单调变化约 2 mm，无 MC 错误；再正向点动回原位。
+   **历史陷阱一**：2026-10-29 之前这一步会失败——`fbMoveVel` 未指定 `Direction`，默认 `MC_Direction.current` 遇到负速度时方向不反转、速度失控（实测 D4 冲了 229 mm），且 `fbMoveVel.Error` 始终 FALSE。现已改为 `Velocity := ABS(...)` + `SEL` 显式方向。若再次出现「同向」或「超速」，先查这一处。
+   **历史陷阱二**：`FB_ManualControl` 原先只在有按钮时写请求，松开后 `aRequest[i]` 残留 `Jog`，而 `FB_RealAxis` 第 50 相位靠 `None`/`Stop` 才停止，于是松手不停。现已改为每扫描先撤销再按按钮重写。若出现「松手还在动」，先查这一处。
+   **历史陷阱三**：此时若 `uiBlockedDevice` 非 0、`aSelectedCommand[i].eAction` 被改成 `Stop`，说明被 `FB_Interlocks` 挡了，不是轴的问题。见下方互锁说明。
+4. `xRelativeVerify := TRUE`，执行初始化 → `uiVerifyPhase` 走 0→1→2→3→4，`uiInitializeStep` 到 1000，回 Ready。
+5. 百分表核对 1.000 指令的实际位移，误差 < 0.05 mm；差 10 倍说明轴单位/齿轮比配错。
+6. 接 `ASDA_E3_1` 到 D4，重复 3~5。**这一步之前必须先确认台达从站能进 OP**。
+7. 最后 17 台一起跑自动（D2/D4 真实，其余仿真），确认一个完整循环三路收尾全部完成。
+
+> **2026-10-30 起手动模式不做机构互锁**，所以手动点动 D4 / D2 不会再被挡（`uiBlockedDevice` 在手动下恒为 0）。下面这段是历史记录，仅适用于自动流程，或将来给手动按需补回互锁时。
+> 历史：`FB_Interlocks` 曾要求 D4 移动时 D5 在升起端（0.0），而初始化第 40 步把 D5 置到 1.0，所以初始化后手动动 D4 一定被挡（`uiBlockedDevice = 4`）；D2 正向还要求 G1 下压 + G9 下刀 + D3 盘刀运行三个条件同时成立。**任何情况下都不绕过 `xPermit` 和安全许可**。
+>
+> （自动流程适用）为什么「电机能转、初始化能跑、偏偏点动不动」：`FB_Interlocks` 只对 `xMotion` 检查机构互锁，而 `xMotion` 的定义是 `Jog` **或**「`Position` 且目标与当前位置差 > 0.01」。所以 `Run`（调试驱动电机）永远不检查，初始化里的 `Position` 因目标≈当前位置也常常不检查，只有点动必定检查。点动不动时先看 `stStatus.uiBlockedDevice` 和 `aSelectedCommand[i].eAction` 是否被改成了 `Stop`。
+>
+> 机构互锁现在只约束自动流程：`FB_Interlocks` 收到 `xManualMode` 为 TRUE 时整段跳过 CASE。自动流程里 D4 仍要求 D5 升起（`FB_ClearLength` 会先升 D5 再移 D4），D2 正向仍要求 G1 下压 + G9 下刀 + D3 盘刀运行。`xInterlockBypass` 已降级为预留字段，当前不影响任何判定。
 
 ## 自动工序
 
@@ -204,9 +272,12 @@
 | 9 / 10 / 11 / 12 | 仿真标志 / 已初始化 / 料到位 / 当前料型 |
 | 13 / 14 | 解析器观察到的序号 / 格式检查结果 |
 | 15 / 16 | 实体旋钮模式：0 手动 / 1 自动；远程启停授权 |
+| 17 / 18 | 真实设备接管掩码（第 i 位=设备 i 走真实轴）；安全来源 0 仿真 / 1 真实 / 2 调试旁路 |
+| 19 / 20 | 是否处于相对验证模式；初始化拒绝原因（0 未拒绝，1 有真实设备但未开相对验证） |
 | 32..48 | 17 个设备的位置，有符号 INT，缩放 0.1 工程单位 |
 
-命令处理结果：0=接受，1=未授权远程启停，2=不支持命令，3=模式/状态/本地停止不允许，5=配方不合法。
+命令处理结果：0=接受，1=未授权远程启停，2=不支持命令，3=模式/状态/本地停止不允许，4=相对验证模式禁止启动自动，5=配方不合法。
+**上位机不能只看 9 号字（xSimulation）**：混跑时它恒为 TRUE，必须结合 17 号掩码判断哪些编号已接实机。
 格式检查结果 2 表示帧格式、版本、模式或命令码无效，未发给整机执行。
 命令接受不表示动作完成；应继续读取整机状态、工序和报警。
 
@@ -218,9 +289,24 @@
 2026-10-16 已在独立工程副本核对新建 GVL、声明区及程序正文的中文，保存、关闭、重开后的字符值一致。
 这项修正不会自动恢复历史乱码注释；恢复时应使用原始中文文本。
 
+**2026-10-28 补充：写入方向会静默产生乱码，回读方向是正常的。**
+用 MCP 的 `set_pou_code` 传中文时，内容是以 `"""..."""` 字面量嵌进 IronPython 源码执行的，没有编码声明，中文会被按字节写成 mojibake：工程里存的不再是汉字，而是「UTF-8 字节按 Latin-1 逐字符摊开」的结果（`模` 变成码点 0xE6/0xA8/0xA1 三个字符），IDE 里显示为 `å¤æ¥` 之类。`set_pou_code` 本身报成功，编译也通过，只有打开编辑器才看得出来。
+
+排查时最大的坑：`.text` 回读出来是**如实反映**工程内容的（内容乱码，回读就乱码），但直接 `print` 到 UTF-8 控制台会把这些码点输出成原始字节，控制台又按 UTF-8 解回来，**看起来完全正常**。所以不要靠 `print` 判断，要看码点：
+
+- 正确汉字：码点在 0x4E00–0x9FFF（`模` = 27169）
+- mojibake：码点在 0x80–0xFF（`模` 的乱码形态 = 230/168/161）
+
+正确的写入方式：不要用 `set_pou_code` 传非 ASCII 内容，改用 `eval_python` 调 `obj.textual_declaration.replace(unicode_text)`，并确保传进去的是真 unicode。修复已有乱码的办法是把它 `encode('latin-1').decode('utf-8')` 还原后重新 `replace()`，全程在 IDE 内完成，不经过传输层。
+
 ## 后续接实机前要补齐
 
-真实轴和 I/O 接线、工程单位、限位和原点、D8 角度、D2 切割长度、D4/D7 各位置、各动作时间和速度；G2 三种料型与实际继电器对应关系；喷油关闭规则；安全回路、失气/断电行为及受控停止；Modbus 寄存器映射、连接监视及断线策略。
+已完成（2026-10-28）：D2/D4 真实轴适配、逐台接管开关、两级安全旁路、相对验证模式、真实设备状态与掩码发布。
+
+仍需补齐：真实轴回零方案与原点开关；轴对象里的工程单位、软限位、CSP 模式、站地址；台达 ASDA-B3 的编码器分辨率与每转位移（**与汇川 SV660N 不同，必须各自标定**）；其余 15 台的真实 I/O 接线；D8 角度、D2 切割长度、D4/D7 各位置、各动作时间和速度；G2 三种料型与实际继电器对应关系；喷油关闭规则；安全回路、失气/断电行为及受控停止；Modbus 寄存器映射、连接监视及断线策略。
+
+> `framework/sources/*.st` 本次是由 IDE 回读导出的，`build_sources.py` / `comments_zh.py` **未同步**。若之后重新运行生成器，会覆盖本次人工改动；请先把改动回写生成器，或改完继续用 IDE 导出覆盖 `sources/`。
 
 原工程完整备份：`../before-machine-framework-20261015.projectarchive`。
+本次改造前备份：`../beveling-before-realaxis-20261028.project`。
 `baseline-20261015.json` 保存导入前的旧程序文本。

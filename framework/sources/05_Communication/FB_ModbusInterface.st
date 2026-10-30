@@ -64,5 +64,9 @@ awTx[11]:=BOOL_TO_WORD(stStatus.xMaterialAtLength); awTx[12]:=UINT_TO_WORD(stSta
 awTx[13]:=wRequestSequence; awTx[14]:=UINT_TO_WORD(uiParseResult);
 awTx[15]:=TO_WORD(stStatus.eMode);
 awTx[16]:=BOOL_TO_WORD(stStatus.xRemoteStartStopAllowed);
+(* 17=真实设备接管掩码；18=安全来源0仿真/1真实/2调试旁路；19=是否相对验证；20=初始化拒绝原因。 *)
+(* 上位机不能只看 xSimulation：混跑时它恒为 TRUE，必须结合 17 号字判断哪些编号已接实机。 *)
+awTx[17]:=stStatus.wRealDeviceMask; awTx[18]:=UINT_TO_WORD(stStatus.uiSafetySource);
+awTx[19]:=BOOL_TO_WORD(stStatus.xRelativeVerify); awTx[20]:=UINT_TO_WORD(stStatus.uiInitReject);
 (* awTx[32..48]：设备 1..17 位置，按 0.1 工程单位缩放，解读为有符号 INT。 *)
 FOR i:=1 TO 17 DO awTx[31+i]:=INT_TO_WORD(LREAL_TO_INT(aStatus[i].lrPosition*10.0)); END_FOR

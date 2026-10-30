@@ -1,23 +1,25 @@
 (* 模块说明：将手动按钮转为统一设备请求。点动松开即取消；定位请求保持到本次动作完成；D6 不调度。 *)
 FUNCTION_BLOCK FB_ManualControl
 VAR_INPUT
-    xEnable : BOOL; (* 手动模式且按钮释放联锁已满足时允许；未使能也同步按钮快照。 *)
-    aManual : ARRAY[1..17] OF ST_ManualCommand; (* 各设备手动请求，索引 1..17；进入手动后先释放所有按钮再允许动作。 *)
+	xEnable : BOOL; (* 手动模式且按钮释放联锁已满足时允许；未使能也同步按钮快照。 *)
+	stReal : ST_RealDeviceSettings; (* 真实设备接管设置；真实编号的手动速度收紧到验证速度。 *)
+	aManual : ARRAY[1..17] OF ST_ManualCommand; (* 各设备手动请求，索引 1..17；进入手动后先释放所有按钮再允许动作。 *)
 END_VAR
 VAR_IN_OUT
-    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
-    aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
-    udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
+	aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
+	aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+	udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
 END_VAR
 VAR_OUTPUT
-    uiRejectDevice : UINT; (* 本扫描最后一个手动拒绝设备索引；0 无，常见原因是冲突按钮或不支持该动作。 *)
+	uiRejectDevice : UINT; (* 本扫描最后一个手动拒绝设备索引；0 无，常见原因是冲突按钮或不支持该动作。 *)
 END_VAR
 VAR
-    aPrev : ARRAY[1..17] OF ST_ManualCommand; (* 上扫描手动按钮快照；即使禁用仍更新，防止按住按钮切模式后被误作新上升沿。 *)
-    aPending : ARRAY[1..17] OF ST_DeviceCommand; (* 手动定位的锁存请求，直到本次命令完成；点动或运行优先时清除。 *)
-    aRunID : ARRAY[1..17] OF UDINT; (* 各设备按住运行/点动时保持的序号，按钮释放后归零。 *)
-    i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
-    lrVelocity : LREAL; (* 本扫描限幅后的手动速度，取绝对值限幅 0.1..100；反向点动时变为负值。 *)
+	aPrev : ARRAY[1..17] OF ST_ManualCommand; (* 上扫描手动按钮快照；即使禁用仍更新，防止按住按钮切模式后被误作新上升沿。 *)
+	aPending : ARRAY[1..17] OF ST_DeviceCommand; (* 手动定位的锁存请求，直到本次命令完成；点动或运行优先时清除。 *)
+	aRunID : ARRAY[1..17] OF UDINT; (* 各设备按住运行/点动时保持的序号，按钮释放后归零。 *)
+	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
+	lrVelocity : LREAL; (* 本扫描限幅后的手动速度，取绝对值限幅 0.1..100；反向点动时变为负值。 *)
+	lrVelocityMax : LREAL; (* 本扫描速度上限；真实设备收紧到验证速度，防止全速冲出。 *)
 END_VAR
 
 (* 每扫描重新判断按钮冲突；无合法请求的设备由整机统一撤销动作。 *)
@@ -27,7 +29,13 @@ FOR i:=1 TO 17 DO
         aPending[i].eAction:=E_DeviceAction.None;
         aRunID[i]:=0;
     ELSIF i<>6 THEN
-        lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),100.0);
+        (* 先撤销本设备请求，只有命中合法按钮时才在下面重新写入。否则松开点动后，
+           上一扫描的 Jog 会一直残留在共享请求数组里，真实轴靠 None/Stop 停止的逻辑永远等不到。 *)
+        aCommand[i]:=F_Command(E_DeviceAction.None,0,0.0,0.0);
+        (* 真实设备的手动速度收紧到验证速度，避免首次试车全速冲出去；仿真仍用 0.1..100。 *)
+        lrVelocityMax:=100.0;
+        IF stReal.axRealDevice[i] THEN lrVelocityMax:=LIMIT(0.1,stReal.lrVerifyVelocity,100.0); END_IF
+        lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),lrVelocityMax);
         IF (aManual[i].xJogPositive AND aManual[i].xJogNegative)
            OR ((aManual[i].xJogPositive OR aManual[i].xJogNegative) AND (aManual[i].xMove OR aManual[i].xRun))
            OR (aManual[i].xMove AND aManual[i].xRun) THEN

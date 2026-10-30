@@ -45,5 +45,152 @@
     "parameterModbusRegistersMapped": false,
     "physicalInputAddressesMapped": false,
     "modeSource": "physical panel selector, simulated by ST_PanelInputs in simulation mode"
+  },
+  "realAxisIntegration": {
+    "date": "2026-10-28",
+    "purpose": "D2 切割走刀接 Axis_1（汇川 SV660N），D4 定长平移接 ASDA_E3_1（台达 ASDA-B3-E），其余 15 台继续走 FB_SimDevice。",
+    "backupBeforeChange": "../beveling-before-realaxis-20261028.project",
+    "newObjects": [
+      "ST_RealDeviceSettings",
+      "GVL_RealDevice",
+      "F_SafetyBypassActive",
+      "FB_RealAxis"
+    ],
+    "modifiedObjects": [
+      "ST_DeviceConfig",
+      "ST_DeviceStatus",
+      "ST_MachineStatus",
+      "FB_DeviceManager",
+      "FB_Machine",
+      "FB_Interlocks",
+      "FB_ManualControl",
+      "FB_ModbusInterface",
+      "PLC_PRG"
+    ],
+    "untouchedObjects": [
+      "FB_Axis",
+      "FB_Motor",
+      "FB_Cylinder",
+      "FB_Valve",
+      "FB_SimDevice",
+      "FB_SimPlant",
+      "FB_Initialize",
+      "03_Units 全部 8 个",
+      "FB_AutoCycle",
+      "FB_AlarmManager",
+      "FB_IOMap",
+      "GVL_IO",
+      "GVL_Parameters",
+      "GVL_Simulation"
+    ],
+    "codeObjects": 56,
+    "switchModel": "GVL_Parameters.xSimulation 保持 TRUE 作为整机仿真基准；逐台接管由 GVL_RealDevice.stSettings.axRealDevice[1..17] 控制，本版本仅索引 2 和 4 生效，其余索引置 TRUE 报 3002。",
+    "axisBinding": {
+      "D2": "Axis_1 (InoSV660N, AXIS_REF_SM3)",
+      "D4": "ASDA_E3_1 (ASDA_B3_E_CoE_Drive, AXIS_REF_SM3)"
+    },
+    "compiled": true,
+    "cleanRebuild": true,
+    "compileErrors": 0,
+    "compileWarnings": 2,
+    "compileWarningDetail": [
+      "未加载库(CmpLog)，将会导致高效数组越界/除零诊断日志不能输出；如需此功能，请加载对应库。",
+      "No POU defined for task 'MainTask'"
+    ],
+    "warningNote": "两条警告均为改造前已存在，与本次改动无关。",
+    "sourceSynced": true,
+    "sourceEncoding": "UTF-8 without BOM, CRLF",
+    "plcLogin": false,
+    "plcDownload": false,
+    "runtimeCycleTestPerformed": false,
+    "hardwareMotionVerified": false,
+    "homingImplemented": false,
+    "safetyCircuitWired": false,
+    "knownGaps": [
+      "未做回零：真实轴拒绝绝对定位（报 2002），必须开 xRelativeVerify 才能通过初始化第 30 步。",
+      "安全许可靠两级软件旁路（xSafetyBypass + xSafetyBypassConfirm），不是安全级回路。",
+      "轴单位、软限位、CSP 模式、站地址需在轴对象与驱动器侧配置，程序不替代这些设置。",
+      "台达 ASDA-B3 编码器分辨率与汇川 SV660N 不同，必须各自用百分表标定，禁止照抄 8388608。",
+      "framework/sources 由 IDE 回读导出；build_sources.py 未同步本次改动，重新生成会覆盖。"
+    ],
+    "encodingFix": {
+      "date": "2026-10-28",
+      "trigger": "用户在 IDE 中发现改过对象的注释显示为 mojibake（å¤æ¥）。",
+      "rootCause": "MCP 的 set_pou_code 将内容以三引号字面量嵌入 IronPython 源码执行，无编码声明，中文被按字节写入为 mojibake：工程内存储的是 UTF-8 字节按 Latin-1 逐字符摊开的结果，IDE 显示乱码。工具与编译均不报错。",
+      "misdiagnosis": "初次回读时用 print 判断，控制台把 mojibake 码点输出为原始字节又按 UTF-8 解回，显示正常，导致误判为回读 API 怪癖，并把错误归因写入 README。",
+      "detectionRule": "码点在 0x4E00-0x9FFF 为正确汉字；0x80-0xFF 为 mojibake。不能以 print 输出作为判断依据。",
+      "repairedObjects": 13,
+      "repairedList": [
+        "ST_DeviceConfig",
+        "ST_DeviceStatus",
+        "ST_MachineStatus",
+        "ST_RealDeviceSettings",
+        "GVL_RealDevice",
+        "F_SafetyBypassActive",
+        "FB_RealAxis",
+        "FB_DeviceManager",
+        "FB_Machine",
+        "FB_Interlocks",
+        "FB_ManualControl",
+        "FB_ModbusInterface",
+        "PLC_PRG"
+      ],
+      "falsePositive": "GVL_Motion：本身含正确中文，仅混有 Latin-1 符号，未改动。",
+      "repairMethod": "在 IDE 内对每个对象执行 s.encode('latin-1').decode('utf-8') 还原后 textual_declaration.replace() / textual_implementation.replace()，不经过传输层。",
+      "verification": "13 个对象复扫无 0x80-0xFF 残留；clean + build 0 错误、2 条原有警告；13 个 .st 已重新导出并校验中文。",
+      "correctWriteMethod": "非 ASCII 内容不要用 set_pou_code，改用 eval_python 调 replace() 并确保传入真 unicode。"
+    },
+    "jogDirectionFix": {
+      "date": "2026-10-29",
+      "trigger": "实测 xJogNegative 与 xJogPositive 同方向且速度约快 10 倍：D4 正向从 -63.5 到 -87.0 走 23.5 mm，反向从 -87.0 冲到 -316.5 走 229.5 mm，fbMoveVel.Error 始终 FALSE。",
+      "rootCause": "FB_RealAxis 调用 fbMoveVel(MC_MoveVelocity) 时未指定 Direction，使用库默认 MC_Direction.current。Velocity 传负值与该默认组合时行为异常：方向不反转、速度失控。MC_MoveVelocity 的 Velocity 在 positive/negative 方向下必须为正值。",
+      "fix": "改为 Velocity := ABS(lrCmdVelocity) 且 Direction := SEL(lrCmdVelocity < 0.0, MC_Direction.positive, MC_Direction.negative)。相位 40（连续运行）与 50（点动）共用同一次调用，一并修正。",
+      "alsoFixed": "删除 fbMoveVel 声明注释中关于 ContinuousUpdate 的错误描述，MC_MoveVelocity 无该参数。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）",
+      "downloaded": false,
+      "hardwareRetestPerformed": false,
+      "warning": "修复未经真机复测前，禁止用 xJogNegative 试真机；空载电机曾冲 229 mm，带负载会撞机且全程无报警。"
+    },
+    "jogRequestNotCleared": {
+      "date": "2026-10-29",
+      "trigger": "下载 Direction 修复后实测：轴 2 反向可动、正向不动；轴 4 双向都不动。读 fbRealD4 得 uiPhase=0、lrCmdVelocity=0、xPending=FALSE，但 aSelectedCommand[4].udiID 仍为 26、eAction 为 Stop。",
+      "rootCause": "两处叠加。(1) FB_ManualControl 只在有按钮时才写 aCommand[i]，松开按钮后上一扫描的 Jog 请求残留在共享请求数组里，FB_RealAxis 第 50 相位靠 eAction=None/Stop 才停止，因此永远等不到撤销，轴松手不停。(2) FB_Interlocks 把 D4 的 Jog 改写成 Stop：要求 F_At(aStatus[5],0.0)，而 FB_Initialize 第 40 步把 D5 置到 1.0 并保持，初始化后 D4 点动被永久挡死；D2 正向被挡是因为 Jog 且 lrVelocity>0 走切割分支，要求 G1 下压 1.0 + G9 下刀 1.0 + D3 盘刀 xActive 三者同时成立，手动试轴不可能满足，而反向走 ELSE 分支只要求 xKnifeUp，所以反向能过。",
+      "evidence": "FB_Interlocks 先执行 aCommand[i]:=aRequest[i] 再覆盖 eAction，故 udiID=26 被保留，可反证原始请求是 Jog/26；FB_ManualControl 全文不写 Stop，排除手动层产生 Stop 的可能。",
+      "fix": "FB_ManualControl 在 ELSIF i<>6 分支开头无条件 aCommand[i]:=F_Command(E_DeviceAction.None,0,0.0,0.0)，仅命中合法按钮时才在下面重新写入；未使能时不清理，避免擦掉 FB_Initialize/FB_AutoCycle 写入的请求。",
+      "notChanged": "FB_Interlocks 未改。D4 要求 D5 升起在自动流程里由 FB_ClearLength 先升 D5 再移 D4 保证，属正确互锁；手动调试期用 xInterlockBypass 放宽，或先手动把 D5 点动回 0.0。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）",
+      "downloaded": false,
+      "hardwareRetestPerformed": false,
+      "warning": "未下载复测。xInterlockBypass 只放宽 D2/D4 机构互锁，不放宽 xPermit 与安全许可；真机双向点动前仍应把 lrVerifyVelocity 压到 0.2 以内。"
+    },
+    "interlockBypassManualOnly": {
+      "date": "2026-10-30",
+      "trigger": "下载后用户反馈「还是一样的现象」，但同时说明「调试驱动电机和往返初始化是好的」。",
+      "diagnosis": "三个现象可用 xMotion 的定义一次解释：FB_Interlocks 只对 xMotion 检查机构互锁，而 xMotion := (Jog) OR (Position AND |目标-当前位置| > 0.01)。Run 不在 xMotion 内，调试驱动电机永不检查互锁；初始化里的 Position 因目标≈当前位置常常 xMotion=FALSE，也不检查；只有 Jog 必定检查。所以「电机能转、初始化能跑、点动不动」不是修改没生效，而是点动本来就该被互锁挡住。",
+      "change": "FB_Interlocks 新增 VAR_INPUT xManualMode；条件改为 IF xMotion AND NOT (xManualMode AND stReal.xInterlockBypass AND ((i=2) OR (i=4)))。FB_Machine 调用处传 xManualMode:=(stStatus.eState=E_MachineState.Manual)。",
+      "rationale": "原实现下 xInterlockBypass 对自动模式也生效，等于把 D4「D5 必须升起」这条防撞互锁在自动流程里一起关掉了。收紧为手动模式专用后，调试期照旧能放开，自动流程的互锁始终有效。",
+      "versionMarker": "下载后若监视表能读到 PLC_PRG.fbMachine.fbInterlocks.xManualMode，即证明新程序已在运行；该变量在旧程序里不存在。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）；代码大小 2005662 → 2005710 字节，确认重新构建",
+      "downloaded": false,
+      "hardwareRetestPerformed": false,
+      "lineEndingRepair": "本次发现 10 个 .st 为 CRCRLF（cr 数 = 2×lf）。FB_Interlocks.st 在规范化时被误写成每行之间插空行，已按原文重写；全部 .st 已统一为 crlf == lf == cr 的纯 CRLF、无 BOM。"
+    },
+    "manualModeNoInterlock": {
+      "date": "2026-10-30",
+      "decision": "手动模式暂不做机构互锁，互锁只约束自动流程。后续调试中按实际情况逐条补回硬干涉条件。",
+      "userRationale": "手动模式就是机器异常时人工介入调试，需要能独立驱动单轴；互锁挡住单轴动作没有意义。",
+      "reviewNote": "评审确认两种性质混在同一个 CASE 里：硬干涉（D5 挡 D4 行程、平台旋转扫刀、机械手未抬就平移）与工序条件（G1 已压紧、G9 已下刀、D3 盘刀在转、D2 在回刀起点、G4/G2 姿态、夹爪开合）。用户的判断对工序条件成立，对硬干涉不成立，因此本轮先整体跳过、留待逐条补回，而不是永久删除。",
+      "change": "FB_Interlocks 判定改为 IF xMotion AND NOT xManualMode THEN；xManualMode 由 FB_Machine 传 (stStatus.eState=E_MachineState.Manual)。",
+      "fieldStatus": "ST_RealDeviceSettings.xInterlockBypass 降级为预留字段，注释已改；FB_Interlocks 的 stReal 输入保留但判定不再使用。",
+      "behaviorChange": "手动模式下 uiBlockedDevice 恒为 0，aSelectedCommand[i].eAction 不再被改写成 Stop；自动模式行为与改动前完全一致。",
+      "regressionRisk": "手动点动 D4 时若 D5 仍在 1.0，现在会真的拖过去，无任何拦截；D8 转平台、G1 下压、G9 下刀、D7 平移同理。手动试车必须人工确认姿态。",
+      "compiled": true,
+      "compileResult": "0 error(s), 2 warning(s)；代码大小 2005710 → 2005654 字节，确认重新构建",
+      "downloaded": false,
+      "hardwareRetestPerformed": false
+    }
   }
 }
