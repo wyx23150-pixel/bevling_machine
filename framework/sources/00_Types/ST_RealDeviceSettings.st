@@ -1,7 +1,7 @@
 (* 模块说明：真实设备接管与调试旁路设置。默认全部 FALSE，行为与纯仿真完全一致。 *)
 TYPE ST_RealDeviceSettings :
 STRUCT
-axRealDevice : ARRAY[1..17] OF BOOL; (* 逐台接管：TRUE 表示该编号走真实轴；默认全 FALSE。本版本只有 2 和 4 生效，其它编号置 TRUE 报 3002。 *)
+axRealDevice : ARRAY[1..17] OF BOOL; (* 逐台接管：TRUE 表示该编号走真实轴；默认全 FALSE。本版本只有 2 和 8 生效，其它编号置 TRUE 报 3002。 *)
 xRelativeVerify : BOOL; (* 相对验证模式：未回零的真实轴把 Position 解释为正向 d 再反向 d 的往返；回零成功后自动改走绝对定位。 *)
 xInterlockBypass : BOOL; (* 预留：手动模式已默认不做机构互锁，本开关当前不影响判定；后续手动按需补互锁时再用。 *)
 xSafetyBypass : BOOL; (* 安全许可旁路一级开关；默认 FALSE，必须与二级同时置位才生效。 *)

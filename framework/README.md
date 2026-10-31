@@ -180,7 +180,7 @@
 | 3002 | 该编号被请求接管但本版本未支持 |
 | 40000 + MC 错误码 | 任一 MC 功能块报错，低 16 位保留原码便于查手册 |
 
-### 回零（2026-10-30 接入）
+### 回零（2026-10-30 接入，D4 已实测通过）
 
 `FB_Initialize` 第 30 步对 D2/D4 发的是**绝对定位**（`lrCutHome` / `lrLengthPosition`），所以回零是初始化的前置条件。做法是**把回零并进初始化流程**，不必再手动先回零：
 
@@ -239,6 +239,7 @@ fbHoming(Axis := Axis, Execute := xHomeReq);
    **历史陷阱三**：此时若 `uiBlockedDevice` 非 0、`aSelectedCommand[i].eAction` 被改成 `Stop`，说明被 `FB_Interlocks` 挡了，不是轴的问题。见下方互锁说明。
 4. **回零**：给 `GVL_Interface.aManual[4].xHome` 一个上升沿 → `aDeviceStatus[4].xHomed` 变 TRUE、`stStatus.xRealAxesHomed` 变 TRUE。
    若 30 s 后报 2004，按「原点开关 → 回零方式 → 回零方向」的顺序查，别改 PLC 代码。
+   **D4 已于 2026-10-30 15:26 实测通过**：回零后 `Axis.fActPosition = -0.0014`、`xHomed = TRUE`、`udiAlarm = 0`。D2 尚未用程序触发，所以 `xRealAxesHomed` 仍是 FALSE（它要求所有已接管的真实轴都回零）。
    **历史陷阱四**：2026-10-30 首次实机触发时轴完全不动、也不报错，`udiCounter` 加了 1（序号分配过）但 `udiLastID` 又回到 0。原因是 `FB_ManualControl` 的 `xHome` 分支抄了点动分支的写法，在分支开头就 `aPending[i].eAction := None`。点动是**电平动作**，每扫描重写 `aCommand` 即可；回零/定位是**保持型动作**，靠 `aPending` 锁存，每扫描重发直到 `F_Done`。提前清掉后 `Home` 只活一个扫描周期：第 N 扫描设备进相位 60，第 N+1 扫描收到 `None` → `FB_RealAxis` 5.2 段 `eAction = None AND uiPhase <> 0` → `xStopLatch := TRUE`、发 `MC_Stop`，`MC_Home.Execute` 只保持一周期就被打断。现已把清 `aPending` 移到「编号不支持」的 `ELSE` 分支。
    排查要点：**先看 `aPending[4].eAction` 是否在回零期间一直保持 `Home`、`uiPhase` 是否稳定在 60**，再看轴动不动。若 `uiPhase` 在 0 和 60 之间来回跳，就是这个坑。
    **历史陷阱五**：修完陷阱四后轴仍然不动、且 `fbHome.Busy` 一直 TRUE 不退。根因是发的是 `MC_Home`（驱动器回零），而两轴的回零方式都配成了「上位机回零」——驱动器不支持 DS402 回零，收到 Homing 模式后既不动作也不报错，PLC 侧就一直等。已改为 `CmpHCMotion.MC_Homing`。**判断方法：看轴配置「原点参数设置」页顶部的「回原方式」——写「上位机回零（回原指令：MC_Homing）」就必须用 MC_Homing。**
@@ -246,6 +247,18 @@ fbHoming(Axis := Axis, Execute := xHomeReq);
 6. 接 `ASDA_E3_1` 到 D4，重复 3~5。**这一步之前必须先确认台达从站能进 OP**。
 7. 执行初始化 → `uiInitializeStep` 走 10→20→**25（回零）**→30→40→1000，回 Ready。
 8. 最后 17 台一起跑自动（D2/D4 真实，其余仿真），确认一个完整循环三路收尾全部完成。
+
+> **第 7、8 步已于 2026-10-30 17:0x 实测通过**（零代码改动，用的是 15:24 下载的版本）。
+>
+> **初始化**：步骤序列 10→20→25→30→40→1000 全部走到。步骤 25 里 D2 `xHomed` 由 FALSE 变 TRUE、位置 −125.08123 → 0；D4 保持 TRUE、位置 ≈0 —— 两轴 `MC_Homing` 都成功。步骤 30 里 D4 走满 100 mm 实测约 10.8 s（10 mm/s + 50 mm/s² 预估 10.4 s，吻合），末端读到 99.99996。终态 `eState = Ready(20)`、`udiAlarm = 0`。
+>
+> **自动循环**：连跑两轮，`udiCycleCount` 0→1→2，每轮都回 Ready，全程无报警、无步骤超时、`uiBlockedDevice` 恒 0。步骤序列 Idle → FeedWait(10) → StopFeed(20) → Push(30) → Clearance(40) → Rotate(50) → PressDown(60) → KnifeDown(70) → SpindleOn(80) → Cutting(90) → StopCut(100) → PostCut(110) → Complete(120)。
+>
+> **两轴交替**（本轮验证目标）：同一循环内 D4 与 D2 交替动四次，无同时运动 —— D4 100→0（Clearance P020）→ D2 0→20（Cutting）→ D2 20→0（PostCut A020）→ D4 0→100（PostCut C010）。3 变量 / 100 ms 高频采样实测位置：t=0 D2=0、D4≈0；t=2.8 s D2=7.84；t=5.6 s D2=20.0、D4=12.68；t=8.4 s D2≈0、D4=41.82；t=11.6 s D4=77.38；t=14.9 s D4=99.99998；t=18.5 s 回 Idle。终点 D2 = 4.77e−06、D4 = 99.99998，都精确停在各自目标位。
+>
+> **采样工具注意**：`monitor_variables` 是按变量顺序**串行**逐个读的，12 变量 / 55 s 时实际间隔退化到约 11 s，抓不到步骤跳转。后续测试控制在 **4 个变量以内**。另外同批次内 `eAutoStep` 比位置变量早读约 2~3 s，比对波形时要把这个偏移算进去。
+>
+> **接工件前必须注意**：`Cutting` 步 D2 正向的互锁要求 G1 下压到位 + G9 盘刀下降到位 + D3 `xActive`。D3 是仿真电机，收 `Run` 后 `xActive` 会置 TRUE，互锁过得去，但**物理盘刀实际不转**。本轮 D2 是空载电机所以无风险；一旦装料，这一点必须先解决。
 
 > **2026-10-30 起手动模式不做机构互锁**，所以手动点动 D4 / D2 不会再被挡（`uiBlockedDevice` 在手动下恒为 0）。下面这段是历史记录，仅适用于自动流程，或将来给手动按需补回互锁时。
 > 历史：`FB_Interlocks` 曾要求 D4 移动时 D5 在升起端（0.0），而初始化第 40 步把 D5 置到 1.0，所以初始化后手动动 D4 一定被挡（`uiBlockedDevice = 4`）；D2 正向还要求 G1 下压 + G9 下刀 + D3 盘刀运行三个条件同时成立。**任何情况下都不绕过 `xPermit` 和安全许可**。

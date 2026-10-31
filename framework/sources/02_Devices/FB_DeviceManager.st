@@ -18,8 +18,8 @@ VAR
 	aCylinder : ARRAY[1..17] OF FB_Cylinder; (* 气缸功能块实例数组，按 G 编号驱动对应仿真实例。 *)
 	aValve : ARRAY[1..17] OF FB_Valve; (* 阀功能块实例数组，供 G5 喷油及 G6 吹气使用。 *)
 	fbRealD2 : FB_RealAxis; (* D2 切割走刀真实轴实例，绑定 Axis_1（汇川 SV660N）。 *)
-	fbRealD4 : FB_RealAxis; (* D4 定长平移真实轴实例，绑定 ASDA_E3_1（台达 ASDA-B3-E）。 *)
-	axUseReal : ARRAY[1..17] OF BOOL; (* 本扫描逐台接管标志；本版本只有 2 和 4 可能为 TRUE。 *)
+	fbRealD8 : FB_RealAxis; (* D8 平台旋转真实轴实例，绑定 ASDA_E3_1（台达 ASDA-B3-E）。 *)
+	axUseReal : ARRAY[1..17] OF BOOL; (* 本扫描逐台接管标志；本版本只有 2 和 8 可能为 TRUE。 *)
 	xBooted : BOOL; (* 本功能块首次初始化完成标志，防止每扫描重写初值。 *)
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
@@ -46,22 +46,22 @@ IF NOT xBooted THEN
 	xBooted := TRUE;
 END_IF
 
-(* 计算逐台接管标志：本版本只有 D2 与 D4 支持真实轴，其余编号置 TRUE 会报 3002。 *)
+(* 计算逐台接管标志：本版本只有 D2 与 D8 支持真实轴，其余编号置 TRUE 会报 3002。 *)
 FOR i := 1 TO 17 DO
-	axUseReal[i] := stReal.axRealDevice[i] AND ((i = 2) OR (i = 4));
+	axUseReal[i] := stReal.axRealDevice[i] AND ((i = 2) OR (i = 8));
 END_FOR
 
 (* 两个真实轴实例每扫描必须无条件调用；轴形参写死，无法放进 FOR 循环。 *)
 fbRealD2(Axis := Axis_1, xUseReal := axUseReal[2], xEnable := xEnable, xReset := xReset,
 	stConfig := aConfig[2], stCommand := aCommand[2], stReal := stReal);
-fbRealD4(Axis := ASDA_E3_1, xUseReal := axUseReal[4], xEnable := xEnable, xReset := xReset,
-	stConfig := aConfig[4], stCommand := aCommand[4], stReal := stReal);
+fbRealD8(Axis := ASDA_E3_1, xUseReal := axUseReal[8], xEnable := xEnable, xReset := xReset,
+	stConfig := aConfig[8], stCommand := aCommand[8], stReal := stReal);
 
 (* 每周期按接管标志二选一：真实实例直接回填，否则按设备类型走仿真。 *)
 FOR i := 1 TO 17 DO
 	IF axUseReal[i] THEN
 		IF i = 2 THEN aStatus[i] := fbRealD2.stStatus;
-		ELSE aStatus[i] := fbRealD4.stStatus;
+		ELSE aStatus[i] := fbRealD8.stStatus;
 		END_IF
 	ELSE
 		CASE aConfig[i].eKind OF

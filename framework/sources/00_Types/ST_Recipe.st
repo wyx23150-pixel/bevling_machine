@@ -3,7 +3,7 @@ TYPE ST_Recipe :
 STRUCT
 uiMaterialModel : UINT := 300; (* 料型选择，仅支持 300/400/600，对应 G2 三个继电器；不是位移。 *)
 lrCutHome : LREAL := 0.0; (* D2 回刀起点；切割终点为该位置加 lrCutLength。 *)
-lrCutLength : LREAL := 20.0; (* D2 本次切割行程，示例默认 20；到达指定终点才结束切割。 *)
+lrCutLength : LREAL := 80.0; (* D2 本次切割行程，示例默认 80；到达指定终点才结束切割。 *)
 lrCutVelocity : LREAL := 10.0; (* D2 切割进给速度；示例参数，接实机前确认工程单位。 *)
 lrPositionVelocity : LREAL := 10.0; (* 其余定位动作的公共请求速度，当前为仿真示例。 *)
 lrBeltVelocity : LREAL := 10.0; (* D1 皮带运行速度请求，当前未换算到实际驱动器单位。 *)

@@ -45,10 +45,11 @@ aCommand[11] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPos
 aCommand[12] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
 aCommand[15] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
 IF F_Done(aStatus[5], udiToken) AND F_Done(aStatus[10], udiToken) AND F_Done(aStatus[11], udiToken) AND F_Done(aStatus[12], udiToken) AND F_Done(aStatus[15], udiToken) THEN uiStep := 25; END_IF;
-25: (* 初始化 25：真实轴回零。未接真实轴的编号由仿真在 tSimAction 后完成，位置保持不变。 *)
+25: (* 初始化 25：真实轴回零。D2 走刀与 D8 旋转是真轴，D4 定长平移当前为仿真，由仿真在 tSimAction 后完成。 *)
 aCommand[2] := F_Command(E_DeviceAction.Home, udiToken, 0.0, 0.0);
 aCommand[4] := F_Command(E_DeviceAction.Home, udiToken, 0.0, 0.0);
-IF F_Done(aStatus[2], udiToken) AND F_Done(aStatus[4], udiToken) THEN uiStep := 30; END_IF;
+aCommand[8] := F_Command(E_DeviceAction.Home, udiToken, 0.0, 0.0);
+IF F_Done(aStatus[2], udiToken) AND F_Done(aStatus[4], udiToken) AND F_Done(aStatus[8], udiToken) THEN uiStep := 30; END_IF;
 30: (* 仿真初始化 30：D2/D4/D7/D8 移至示例初始坐标，全部完成才继续。 *)
 aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrPositionVelocity);
 aCommand[4] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrLengthPosition, stRecipe.lrPositionVelocity);

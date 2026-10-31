@@ -7,7 +7,7 @@
   "compileResult": "Compilation complete for C:\\Users\\Lenovo\\Desktop\\PLC\\huichuan\\Beveling machine\\beveling\\beveling.project.\n0 error(s), 2 warning(s).\n\nWarnings:\nWARNING: 未加载库(CmpLog)，将会导致高效数组越界/除零诊断日志不能输出；如需此功能，请加载对应库。\nWARNING: No POU defined for task 'MainTask'",
   "hardwareLoginPerformed": false,
   "plcDownloadPerformed": false,
-  "runtimeCycleTestPerformed": false,
+  "runtimeCycleTestPerformed": true,
   "chineseCommentUpdate": {
     "date": "2026-10-16",
     "codeObjects": 49,
@@ -220,8 +220,9 @@
       "compiled": true,
       "compileResult": "0 error(s), 2 warning(s)；代码大小 2005654 → 2011638 字节，确认重新构建",
       "downloaded": true,
-      "hardwareRetestPerformed": false,
-      "warning": "未下载复测。首次回零前把 lrVerifyVelocity 压到 0.2~0.5，并确认原点开关在行程内、回零方向朝向安全侧。",
+      "hardwareRetestPerformed": true,
+      "retestResult": "2026-10-30 15:26 D4 程序回零成功（走的是后来换成的 MC_Homing，见 homingViaMcHoming）。回零后位置回到 -0.0014，xHomed=TRUE。D2 未触发，故 xRealAxesHomed 仍为 FALSE。",
+      "warning": "首次回零前把 lrVerifyVelocity 压到 0.2~0.5，并确认原点开关在行程内、回零方向朝向安全侧。",
       "note": "14:12 确认已下载并在运行：能读到 fbRealD4.xHomed（旧版无此变量），eState=Manual、xPermit=TRUE、uiSafetySource=2。"
     },
     "manualModeNoInit": {
@@ -233,7 +234,8 @@
       "remainingRisk": "手动模式无任何机构互锁拦截，D5 在下位时点动 D4 会真的拖过去。硬干涉条件待后续按调试情况逐条补回。",
       "compiled": true,
       "downloaded": true,
-      "hardwareRetestPerformed": false
+      "hardwareRetestPerformed": true,
+      "retestNote": "多次在线确认：开机没跑初始化，eState 直接就是 Manual，手动点动与回零都能动作。"
     },
     "manualHomeRequestCleared": {
       "date": "2026-10-30",
@@ -245,7 +247,8 @@
       "compiled": true,
       "compileResult": "0 error(s), 2 warning(s)；代码大小保持 2011638 字节（删一条赋值、ELSE 分支补一条，净零）",
       "downloaded": true,
-      "hardwareRetestPerformed": false,
+      "hardwareRetestPerformed": true,
+      "retestNote": "回零最终成功（15:26）间接验证了本修复：aPending 能保持住，Home 请求不再只活一个扫描周期。",
       "warning": "下载后先确认 aPending[4].eAction 在回零期间保持 Home、uiPhase 保持 60，再判断轴是否动。",
       "note": "2026-10-30 14:35 在线修改方式下载完成，应用回到 run。下载后核对：eState=Manual（免初始化生效）、xManualArmed=TRUE、xPermit=TRUE、fbRealD4.uiPhase=0、fbRealD4.xHomed=FALSE、fbRealD4.Axis.fActPosition=76.2186（位置保持，未被下载清零），待用户给 xHome 上升沿实测。"
     },
@@ -268,9 +271,43 @@
       "notChanged": "FB_Initialize 步骤 25 未改，它只发 E_DeviceAction.Home，具体走哪个 MC 块由 FB_RealAxis 决定，所以初始化里的回零自动跟着换过来了。",
       "compileResult": "0 error(s), 2 warning(s)（CmpLog 未加载、MainTask 无 POU，均为历史既有）；代码大小 2011638 → 2060648 字节（+49 KB 为 CmpHCMotion 库代码），补 CommandAborted 后 2060648 → 2060696 字节，确认两次都是全新构建",
       "downloaded": true,
-      "hardwareRetestPerformed": false,
-      "versionMarker": "下载后能读到 PLC_PRG.fbMachine.fbDevices.fbRealD4.fbHoming.Busy / .CommandAborted（旧版叫 fbHome），即证明新程序在运行。",
+      "hardwareRetestPerformed": true,
+      "retestResult": "2026-10-30 15:26 用户实测：「测试了回零现在成功」。D4 回零后 Axis.fActPosition = -0.0014（回到 0 坐标），fbRealD4.xHomed = TRUE，stStatus.udiAlarm = 0。D2 尚未用程序触发回零（xHomed 仍 FALSE，位置 9.73），所以 stStatus.xRealAxesHomed 仍为 FALSE，符合设计。",
+      "versionMarker": "能读到 PLC_PRG.fbMachine.fbDevices.fbRealD4.fbHoming.Busy / .CommandAborted（旧版叫 fbHome），即证明新程序在运行。",
       "warning": "回零方向、快慢速、原点开关位置仍是轴配置里的调试值，未按机械实际行程标定。首次程序回零前确认原点开关在行程内、回零方向朝安全侧，并把 lrVerifyVelocity 压低。"
+    },
+    "runtimeAutoCycle": {
+      "date": "2026-10-30",
+      "purpose": "验证真自动流程 E_AutoStep 全链路：初始化 6 步 + 完整自动循环，重点看 D2（切割走刀）与 D4（定长平移）在同一循环内是否严格轮流运动。",
+      "approach": "零代码改动。实轴接管只开 2/4，其余设备走仿真；用强制写面板输入做上升沿，全程监视 uiInitializeStep / eAutoStep / D2·D4 位置。",
+      "codeChanges": "无。本轮未修改任何 ST 源码，未重新编译、未重新下载，用的是 2026-10-30 15:24 下载的版本。",
+      "prerequisitesVerified": "xSimulation=TRUE、axRealDevice[2]=[4]=TRUE、xRelativeVerify=FALSE、xSafetyBypass=xSafetyBypassConfirm=TRUE、xContinuous=FALSE、udiAlarm=0、aDeviceStatus[2/4].xReady=TRUE。以上全部为工程已有值，本轮未做任何写入。",
+      "safetyBypass": "两轴接管后 xAnyReal=TRUE，xRealSafetyOK 未映射恒 FALSE，安全许可只能靠两级软件旁路；实测 stStatus.xSafetyBypassed=TRUE、uiSafetySource=2（调试旁路）。",
+      "preTestBaseline": "D2 lrPosition=-125.08123、xHomed=FALSE（从未用程序回零）；D4 lrPosition≈0、xHomed=TRUE（15:26 回零结果）；udiCycleCount=0。",
+      "recipeUsed": "全部为 ST_Recipe 默认值，未做任何在线改写：lrCutHome=0、lrCutLength=20、lrLengthPosition=100、lrLengthClear=0、lrCutVelocity=10、lrPositionVelocity=10。",
+      "initializationRun": {
+        "result": "成功",
+        "observedSteps": "10 → 20 → 25 → 30 → 40 → 1000",
+        "homingStep25": "D2 xHomed FALSE→TRUE，位置 -125.08123→0；D4 xHomed 保持 TRUE，位置 ≈0。两轴 MC_Homing 均成功。",
+        "positionStep30": "D4 100mm 段实测：34.32 → 88.58 → 99.99996；D2 → 0。",
+        "duration": "D4 走满 100mm 约 10.8 s，与 10 mm/s + 50 mm/s² 预估的 10.4 s 吻合。",
+        "endState": "eState=Ready(20)，udiAlarm=0，xReady=TRUE。"
+      },
+      "autoCycleRuns": 2,
+      "autoCycleResult": "两轮全部成功，udiCycleCount 0→1→2，每轮结束均回 Ready(20)，udoAlarm 全程 0，无任何步骤超时、无 uiBlockedDevice 阻挡记录。",
+      "observedStepSequence": "Idle(0) → FeedWait(10) → StopFeed(20) → Push(30) → Clearance(40) → Rotate(50) → PressDown(60) → KnifeDown(70) → SpindleOn(80) → Cutting(90) → StopCut(100) → PostCut(110) → Complete(120) → Ready",
+      "twoAxisAlternation": {
+        "claim": "同一循环内 D4 与 D2 交替运动四次，全程无同时运动，符合「两个电机轮流运动」的验证目标。",
+        "sequence": "D4 100→0（Clearance P020）→ D2 0→20（Cutting）→ D2 20→0（PostCut A020）→ D4 0→100（PostCut C010）",
+        "evidence": "高频采样（3 变量，100 ms）实测：t=0 eAutoStep=Clearance、D2=0、D4≈0；t=2.8s SpindleOn、D2=7.84；t=5.6s PostCut、D2=20.0、D4=12.68；t=8.4s PostCut、D2≈0、D4=41.82；t=11.6s D4=77.38；t=14.9s D4=99.99998；t=18.5s Idle、D2=0、D4=100。",
+        "note": "monitor_variables 按变量顺序串行读取，同一批次内 eAutoStep 比位置提前约 2~3 s 采样，解释该偏移后与设计时序完全一致。"
+      },
+      "finalPositions": "D2 = 4.77e-06（≈lrCutHome=0，回刀到位）；D4 = 99.99998（≈lrLengthPosition=100，检测位到位）。两轴均精确停在各自目标位。",
+      "cuttingInterlockNote": "Cutting 步 D2 正向前进的互锁要求 G1 下压到位 + G9 盘刀下降到位 + D3 xActive。D3 是仿真电机，收 Run 后 xActive 置 TRUE，互锁可过；但物理盘刀实际不转。本轮 D2 为空载电机，不切料，无风险。接工件前必须处理这一点。",
+      "slowerThanExpected": "monitor_variables 每批次需按变量顺序逐个读，12 变量/55 s 时采样间隔退化到约 11 s，无法抓到完整步骤跳转；改为 3 变量/100 ms 后才拿到可用波形。后续测试应控制在 4 个变量以内。",
+      "forcedVariablesReleased": "测试结束已执行 unforce_all_values，get_forced_expressions 返回空列表。强制过的仅三个面板变量：xStart、xInitialize、xAutoMode。",
+      "projectSaved": true
     }
-  }
+  },
+  "autoCycleTested": true
 }

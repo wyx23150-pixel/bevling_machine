@@ -63,12 +63,12 @@ FOR i:=1 TO 17 DO
                 aCommand[i]:=F_Command(E_DeviceAction.Run,aRunID[i],0.0,lrVelocity);
             ELSE uiRejectDevice:=INT_TO_UINT(i);
             END_IF
-        (* 回零：上升沿锁存一次请求，之后每扫描重发直到完成；只支持真实轴 D2/D4。
+        (* 回零：上升沿锁存一次请求，之后每扫描重发直到完成；真实轴 D2/D8，D4 为仿真但保留入口。
            这里不能像点动那样在分支开头清 aPending —— 回零是保持型动作，清了就只剩一个扫描周期，
            设备刚接收就会被下一扫描的 None 撤销，表现为「下发了但不动」。 *)
         ELSIF aManual[i].xHome THEN
             aRunID[i]:=0;
-            IF (i=2) OR (i=4) THEN
+            IF (i=2) OR (i=4) OR (i=8) THEN
                 IF NOT aPrev[i].xHome THEN
                     aPending[i]:=F_Command(E_DeviceAction.Home,F_NextID(udiCounter),0.0,0.0);
                 END_IF
