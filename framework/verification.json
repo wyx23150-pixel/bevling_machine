@@ -309,5 +309,26 @@
       "projectSaved": true
     }
   },
-  "autoCycleTested": true
+  "autoCycleTested": true,
+  "spindleAxisIntegration": {
+    "date": "2026-10-31",
+    "purpose": "把 D3 盘刀旋转电机（新接第三台汇川 SV660N，空载，轴名 pandao）接入真实轴层，与 D2/D8 同构。",
+    "approach": "只改设备层：FB_DeviceManager 新增 fbRealD3 实例、接管白名单加 i=3、调用区绑定 Axis := pandao、分发区加 ELSIF i = 3；FB_Machine 的 xRealAxesHomed 循环跳过 3 号。流程层、互锁层、手动层零改动。",
+    "deviceTree": "ETHERCAT1 / InoSV660N_1 / pandao (AXIS_REF_SM3)，驱动器当前仍为线性模式",
+    "modifiedObjects": [
+      "FB_DeviceManager",
+      "FB_Machine",
+      "FB_Initialize(仅注释)",
+      "FB_ManualControl(仅注释)",
+      "ST_RealDeviceSettings(仅注释)",
+      "ST_ManualCommand(仅注释)"
+    ],
+    "codeObjects": 6,
+    "compileResult": "0 error(s), 2 warning(s)；两条警告均为历史遗留：未加载库 CmpLog、No POU defined for task 'MainTask'",
+    "projectSaved": true,
+    "runtimeTestPerformed": false,
+    "runtimeTestPending": "需在线把 GVL_RealDevice.stSettings.axRealDevice[3] 置 TRUE，并保持 xSimulation=TRUE、安全旁路两级同时置位；随后手动按住 D3 运行按钮确认 xActive 与驱动器实际转动一致。",
+    "notHomed": "D3 盘刀只收 Run 不收定位，不参与初始化第 25 步回零，也不参与 xRealAxesHomed 判定。",
+    "knownLimitation": "StopCut 步只判 NOT aStatus[3].xActive，而 FB_RealAxis 收到 None/Stop 当拍就清 xActive，不等 MC_Stop 停稳。空载无影响，正式切割前必须改成等实际零速。"
+  }
 }

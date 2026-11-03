@@ -9,6 +9,7 @@ VAR_INPUT
 	xReset : BOOL; (* 故障复位，上升沿清锁存错误与 MC 错误。 *)
 	stConfig : ST_DeviceConfig; (* 行程、速度、加减速与绝对定位许可。 *)
 	stCommand : ST_DeviceCommand; (* 上层统一设备命令，含义与仿真侧完全一致。 *)
+	xFaultHold : BOOL; (* 整机故障保持：TRUE 期间强制 MC_Stop 常置并清所有运动请求，直到复位。 *)
 	stReal : ST_RealDeviceSettings; (* 相对验证距离、速度与旁路设置。 *)
 END_VAR
 VAR_OUTPUT
@@ -89,6 +90,20 @@ lrRelDistance := 0.0;
 lrRelVelocity := 0.0;
 lrCmdVelocity := 0.0;
 
+(* ===== 4.5 整机故障保持：故障期间主动停车，不依赖 xPermit 间接撤销 ===== *)
+(* 为什么需要：进入 Fault 时上层只是让 xPermit 变 FALSE，请求被换成 Stop。但 Stop 是
+   一次性的动作请求，盘刀这类连续运行设备在 MC_Stop 完成后再无后续指令，表现就是
+   “PLC 认为已停、实际还在转”。这里改用 xFaultHold 强制 MC_Stop 常置，直到真正复位。 *)
+IF xFaultHold THEN
+	xStopReq := TRUE;
+	xPending := FALSE;
+	xMoveAbsReq := FALSE; xMoveRelReq := FALSE; xMoveVelReq := FALSE; xHomeReq := FALSE;
+	uiPhase := 0; uiVerifyPhase := 0;
+	udiLastID := 0; udiActiveID := 0;
+	stStatus.udiAcceptedID := 0; stStatus.udiCompletedID := 0;
+	stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+END_IF
+
 (* ===== 5. 主状态判定 ===== *)
 IF NOT xUseReal THEN
 	(* 未接管：不产生任何运动请求，驱动器由 MC_Power 去使能。 *)
@@ -99,6 +114,11 @@ IF NOT xUseReal THEN
 	stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
 	stStatus.udiAcceptedID := 0; stStatus.udiCompletedID := 0;
 	stStatus.xError := FALSE; stStatus.udiErrorID := 0;
+ELSIF xFaultHold THEN
+	(* 故障保持：只允许停止，不接收新命令，也不发布就绪。 *)
+	stStatus.xReady := FALSE;
+	stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
+	stStatus.udiAcceptedID := 0; stStatus.udiCompletedID := 0;
 ELSE
 	(* --- 5.1 接收新序号：新序号就是新命令，不用边沿检测 --- *)
 	IF (stCommand.udiID <> 0) AND (stCommand.udiID <> udiLastID)
@@ -191,7 +211,7 @@ END_IF
 fbPower(Axis := Axis, Enable := xUseReal AND xEnable,
 	bRegulatorOn := xUseReal AND xEnable, bDriveStart := xUseReal AND xEnable);
 fbReset(Axis := Axis, Execute := xUseReal AND rtReset.Q);
-fbStop(Axis := Axis, Execute := xStopReq, Deceleration := stConfig.lrMaxDeceleration);
+fbStop(Axis := Axis, Execute := xStopReq OR xFaultHold, Deceleration := stConfig.lrMaxDeceleration);
 fbMoveRel(Axis := Axis, Execute := xMoveRelReq, Distance := lrRelDistance,
 	Velocity := lrRelVelocity, Acceleration := stConfig.lrMaxAcceleration,
 	Deceleration := stConfig.lrMaxDeceleration);

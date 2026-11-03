@@ -1,22 +1,32 @@
-(* 模块说明：物理 I/O 映射预留。当前数字输出全为 FALSE；G2 按料型形成三个未映射的继电器需求。 *)
 FUNCTION_BLOCK FB_IOMap
+(* 模块说明：设备输出到物理 I/O 的唯一下沉点。真实气缸的阀电平在此写到 GVL_IO_Physical，
+   同时仍维护逻辑输出数组与 G2 三路继电器需求供诊断观察。 *)
 VAR_INPUT
     uiMaterialModel : UINT; (* 料型选择，仅支持 300/400/600，对应 G2 三个继电器；不是位移。 *)
-    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 最终设备命令预留输入，当前映射实现未使用该数组。 *)
+    aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 最终设备命令，当前仅用于诊断，不直接驱动输出。 *)
     aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
+    aValveOut : ARRAY[1..17] OF BOOL; (* 设备管理器给出的阀电气电平 1..17，真实气缸在此下沉到物理点。 *)
 END_VAR
 VAR_IN_OUT
-    axOutputs : ARRAY[0..31] OF BOOL; (* 预留物理数字输出数组 0..31，当前实现每周期强制清 FALSE。 *)
-    axG2RelayDemand : ARRAY[1..3] OF BOOL; (* G2 三路逻辑继电器需求：1=300 料型，2=400，3=600；未映射物理输出。 *)
+    axOutputs : ARRAY[0..31] OF BOOL; (* 逻辑数字输出数组 0..31，仍按 G2 需求填写，供在线监视与后续扩展。 *)
+    axG2RelayDemand : ARRAY[1..3] OF BOOL; (* G2 三路继电器需求：1=300 料型，2=400，3=600。 *)
 END_VAR
 VAR
     i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
 
-(* 物理输出尚未实现；G2 三路继电器需求只用于逻辑观察。 *)
+(* 逻辑输出先清零，只由下面明确赋值的位置置位；未被接管的气缸输出保持失电。 *)
 FOR i:=0 TO 31 DO axOutputs[i]:=FALSE; END_FOR
 FOR i:=1 TO 3 DO axG2RelayDemand[i]:=FALSE; END_FOR
-(* 仅当 G2 下降反馈大于 0.5 时，按运行料型选择一条需求；未绑定物理继电器。 *)
+
+(* ===== 1. 真实气缸阀输出：直接写物理映射符号，TRUE=阀得电=设备动作 ===== *)
+(* 未接管时 aValveOut 为 FALSE，物理点随之失电，不会带着上一个状态一直通电。 *)
+GVL_IO_Physical.xDoG1Valve := aValveOut[9];
+GVL_IO_Physical.xDoG2Valve := aValveOut[10];
+GVL_IO_Physical.xDoG3Valve := aValveOut[11];
+GVL_IO_Physical.xDoG9Valve := aValveOut[17];
+
+(* ===== 2. G2 侧挡按料型选择继电器：仅下降反馈大于 0.5 时形成需求 ===== *)
 IF aStatus[10].lrPosition>0.5 THEN
     CASE uiMaterialModel OF
     300: axG2RelayDemand[1]:=TRUE;
@@ -24,3 +34,9 @@ IF aStatus[10].lrPosition>0.5 THEN
     600: axG2RelayDemand[3]:=TRUE;
     END_CASE
 END_IF
+
+(* ===== 3. 逻辑输出镜像：便于在监视表按索引观察，不直接对应物理点 ===== *)
+axOutputs[0] := aValveOut[9];
+axOutputs[1] := aValveOut[10];
+axOutputs[2] := aValveOut[11];
+axOutputs[3] := aValveOut[17];

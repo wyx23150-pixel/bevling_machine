@@ -141,23 +141,26 @@
 
 `GVL_DeviceIds` 提供对应常量。G2 的三个逻辑继电器需求在 `GVL_IO.axG2RelayDemand[1..3]`，对应 300、400、600 料型，当前均未绑定实际输出。
 
-## 真实轴接管（D2 / D4）
+## 真实轴接管（D2 / D3 / D8）
 
 混跑设计：整机基准仍是仿真，真实设备按编号逐台接管。**`xSimulation` 不要改成 FALSE**，否则 `FB_Machine` 会立刻报 3001 并进 Fault，连手动都进不去。
 
 | 项 | 内容 |
 |---|---|
 | D2 切割走刀 | `Axis_1`，汇川 SV660N，`InoSV660N` 从站 |
-| D4 定长平移 | `ASDA_E3_1`，台达 ASDA-B3-E，`ASDA_B3_E_CoE_Drive` 从站 |
-| 其余 15 台 | 继续 `FB_SimDevice` / `FB_Axis` / `FB_Motor` / `FB_Cylinder` / `FB_Valve` |
+| D3 盘刀旋转 | `pandao`，汇川 SV660N，`InoSV660N_1` 从站；**只收 `Run` 不收定位，不参与回零** |
+| D8 平台旋转 | `ASDA_E3_1`，台达 ASDA-B3-E，`ASDA_B3_E_CoE_Drive` 从站 |
+| 其余 14 台 | 继续 `FB_SimDevice` / `FB_Axis` / `FB_Motor` / `FB_Cylinder` / `FB_Valve` |
 | 设置入口 | `GVL_RealDevice.stSettings`（类型 `ST_RealDeviceSettings`） |
 | 适配功能块 | `FB_RealAxis`，每个真实轴一个实例，在 `FB_DeviceManager` 中无条件调用 |
+
+> D3 盘刀在自动流程里只出现在 `SpindleOn` / `Cutting` 两步（`E_DeviceAction.Run`），`FB_RealAxis` 的 `Run` 相位（40）不检查 `xHomed`，所以它不占初始化第 25 步的完成条件，也不参与 `stStatus.xRealAxesHomed` 判定。它目前按**线性模式**配置，接旋转主轴前需重新标定单位与速度上限。
 
 开关与默认值（全部默认 FALSE，行为与纯仿真逐语句一致）：
 
 | 字段 | 默认 | 作用 |
 |---|---|---|
-| `axRealDevice[1..17]` | 全 FALSE | 逐台接管。本版本只认 2 和 4，其它编号置 TRUE 会在该设备状态上报 3002 |
+| `axRealDevice[1..17]` | 全 FALSE | 逐台接管。本版本只认 2、3 和 8，其它编号置 TRUE 会在该设备状态上报 3002 |
 | `xRelativeVerify` | FALSE | 相对验证模式：**未回零**的真实轴把定位命令解释为「+d → 停留 → −d」往返；回零成功后自动改走绝对定位，本开关不再生效 |
 | `xInterlockBypass` | FALSE | **预留字段**：手动模式已默认不做机构互锁，本开关当前不影响任何判定；后续给手动按需补互锁时再用 |
 | `xSafetyBypass` + `xSafetyBypassConfirm` | 全 FALSE | 两级安全旁路，必须同时为 TRUE 才生效（`F_SafetyBypassActive`） |
@@ -258,7 +261,11 @@ fbHoming(Axis := Axis, Execute := xHomeReq);
 >
 > **采样工具注意**：`monitor_variables` 是按变量顺序**串行**逐个读的，12 变量 / 55 s 时实际间隔退化到约 11 s，抓不到步骤跳转。后续测试控制在 **4 个变量以内**。另外同批次内 `eAutoStep` 比位置变量早读约 2~3 s，比对波形时要把这个偏移算进去。
 >
-> **接工件前必须注意**：`Cutting` 步 D2 正向的互锁要求 G1 下压到位 + G9 盘刀下降到位 + D3 `xActive`。D3 是仿真电机，收 `Run` 后 `xActive` 会置 TRUE，互锁过得去，但**物理盘刀实际不转**。本轮 D2 是空载电机所以无风险；一旦装料，这一点必须先解决。
+> **接工件前必须注意**：`Cutting` 步 D2 正向的互锁要求 G1 下压到位 + G9 盘刀下降到位 + D3 `xActive`。D3 是仿真电机时，收 `Run` 后 `xActive` 会置 TRUE，互锁过得去，但**物理盘刀实际不转**。本轮 D2 是空载电机所以无风险；一旦装料，这一点必须先解决。
+
+> **2026-10-31：D3 盘刀已接入真实轴**（`pandao`，第三台汇川 SV660N，空载）。改动只在设备层：`FB_DeviceManager` 增加 `fbRealD3` 实例、白名单加 `i = 3`、调用绑定 `Axis := pandao`、分发加 `ELSIF i = 3`；`FB_Machine` 的 `xRealAxesHomed` 循环跳过 3 号（盘刀不回零）。流程层、互锁层零改动。
+>
+> 已知限制：`StopCut` 步只判 `NOT aStatus[3].xActive`，而 `FB_RealAxis` 的 `xActive` 在收到 `None`/`Stop` 的当拍就清零，**不等 `MC_Stop` 真正停稳**。空载无影响，正式切割前必须改成等实际零速，否则抬刀时盘刀还在转。
 
 > **2026-10-30 起手动模式不做机构互锁**，所以手动点动 D4 / D2 不会再被挡（`uiBlockedDevice` 在手动下恒为 0）。下面这段是历史记录，仅适用于自动流程，或将来给手动按需补回互锁时。
 > 历史：`FB_Interlocks` 曾要求 D4 移动时 D5 在升起端（0.0），而初始化第 40 步把 D5 置到 1.0，所以初始化后手动动 D4 一定被挡（`uiBlockedDevice = 4`）；D2 正向还要求 G1 下压 + G9 下刀 + D3 盘刀运行三个条件同时成立。**任何情况下都不绕过 `xPermit` 和安全许可**。

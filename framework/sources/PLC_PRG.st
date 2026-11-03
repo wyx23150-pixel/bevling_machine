@@ -29,7 +29,7 @@ fbMachine(xSimulation:=GVL_Parameters.xSimulation,stPanel:=GVL_Interface.stPanel
 (* 4. 将整机反馈发布到监控接口，建议调试时从这里查看主步骤和支线步骤。 *)
 GVL_Interface.stStatus:=fbMachine.stStatus;
 GVL_Interface.aDeviceStatus:=fbMachine.aDeviceStatus;
-(* 5. 形成逻辑输出需求；此版本尚未映射真实 I/O。 *)
+(* 5. 形成逻辑输出并下沉到物理点；真实气缸阀电平在此写入 GVL_IO_Physical。 *)
 fbIO(uiMaterialModel:=fbMachine.stStatus.uiActiveMaterialModel,aCommand:=fbMachine.aSelectedCommand,
-    aStatus:=fbMachine.aDeviceStatus,
+    aStatus:=fbMachine.aDeviceStatus,aValveOut:=fbMachine.aValveOut,
     axOutputs:=GVL_IO.axDigitalOutputs,axG2RelayDemand:=GVL_IO.axG2RelayDemand);

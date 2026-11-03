@@ -55,7 +55,7 @@ FOR i:=1 TO 17 DO
                 aCommand[i]:=F_Command(E_DeviceAction.Jog,aRunID[i],0.0,lrVelocity);
             ELSE uiRejectDevice:=INT_TO_UINT(i);
             END_IF
-        (* 连续运行电平控制，仅允许皮带、盘刀、喷油和吹气。 *)
+        (* 连续运行电平控制，仅允许皮带、盘刀、喷油和吹气；盘刀接真实轴后走 FB_RealAxis 的 Run 相位。 *)
         ELSIF aManual[i].xRun THEN
             aPending[i].eAction:=E_DeviceAction.None;
             IF (i=1) OR (i=3) OR (i=13) OR (i=14) THEN
@@ -64,6 +64,7 @@ FOR i:=1 TO 17 DO
             ELSE uiRejectDevice:=INT_TO_UINT(i);
             END_IF
         (* 回零：上升沿锁存一次请求，之后每扫描重发直到完成；真实轴 D2/D8，D4 为仿真但保留入口。
+           D3 盘刀是连续旋转主轴，只做 Run 不做回零，因此不在本白名单内。
            这里不能像点动那样在分支开头清 aPending —— 回零是保持型动作，清了就只剩一个扫描周期，
            设备刚接收就会被下一扫描的 None 撤销，表现为「下发了但不动」。 *)
         ELSIF aManual[i].xHome THEN

@@ -19,6 +19,7 @@ VAR_OUTPUT
 	stStatus : ST_MachineStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
 	aDeviceStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 设备管理器汇总反馈，索引 1..17；供工序判断及在线监控。 *)
 	aSelectedCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 通过统一互锁后的最终设备请求，交设备管理器执行。 *)
+	aValveOut : ARRAY[1..17] OF BOOL; (* 各设备阀电气电平，索引同设备号；供物理映射层下沉到真实输出点。 *)
 END_VAR
 VAR
 	stCommand : ST_OperatorCommand; (* 本周期选择并合并后的整机命令；本地停止始终优先于远程。 *)
@@ -204,8 +205,9 @@ fbInterlocks(xPermit:=xPermit,xManualMode:=(stStatus.eState=E_MachineState.Manua
     stRecipe:=stActiveRecipe,stReal:=stReal,aRequest:=aRequest,aStatus:=aDeviceStatus);
 aSelectedCommand:=fbInterlocks.aCommand;
 fbDevices(xEnable:=xSimulation AND xSafetyOK,xSimulation:=xSimulation,xReset:=xResetDevices,
-    stSim:=stSim,stReal:=stReal,aCommand:=aSelectedCommand);
+    xFaultHold:=(fbAlarm.udiLatched<>0),stSim:=stSim,stReal:=stReal,aCommand:=aSelectedCommand);
 aDeviceStatus:=fbDevices.aStatus;
+aValveOut:=fbDevices.aValveOut;
 fbPlant(xEnable:=xSimulation,stSettings:=stSim,aStatus:=aDeviceStatus);
 (* 十二、集中发布状态；机械手/定长/回刀卡在哪一步，可从对应 ui...Step 追踪。 *)
 stStatus.eMode:=stCommand.eMode; stStatus.eAutoStep:=fbAuto.eStep;
@@ -217,7 +219,9 @@ stStatus.uiSafetySource:=uiSafetySource; stStatus.uiInitReject:=uiInitReject;
 stStatus.xRemoteStartStopAllowed:=xAllowRemoteStartStop;
 xAllHomed:=TRUE;
 FOR i:=1 TO 17 DO
-    IF stReal.axRealDevice[i] AND NOT aDeviceStatus[i].xHomed THEN xAllHomed:=FALSE; END_IF
+    (* 只有真实轴需要回零；D3 盘刀只做连续旋转不回零。气缸无回零动作，其 xHomed 表示
+       “姿态已由传感器确立”，由 FB_RealCylinder 维护，不参与回零判定。 *)
+    IF stReal.axRealDevice[i] AND (i<>3) AND (i<9) AND NOT aDeviceStatus[i].xHomed THEN xAllHomed:=FALSE; END_IF
 END_FOR
 stStatus.xRealAxesHomed:=xAllHomed;
 stStatus.xInitialized:=xInitialized;
