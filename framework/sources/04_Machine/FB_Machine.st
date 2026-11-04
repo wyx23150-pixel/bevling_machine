@@ -50,6 +50,7 @@ VAR
 	xManualArmed : BOOL; (* 本次进入手动后已观察到全部按钮释放；离开手动即清除。 *)
 	eActiveMode : E_MachineMode; (* 当前初始化/运行时采纳的操作模式，用于检测运行中切换模式。 *)
 	xAnyReal : BOOL; (* 是否有任意设备由真实轴接管；全 FALSE 时后续分支与改造前逐语句一致。 *)
+    udiInterlockFault : UDINT; (* 互锁违规码；互锁在报警汇总之后才调用，故本扫描存入、下扫描并入 udiFault。 *)
 	xAllHomed : BOOL; (* 所有已接管的真实轴都已完成回零；未接真实轴时为 TRUE，用于状态发布。 *)
 	wRealMask : WORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴。 *)
 	wLastRealMask : WORD; (* 上扫描接管掩码；变化时清除初始化并回 Stopped。 *)
@@ -107,6 +108,7 @@ ELSE uiSafetySource:=1; END_IF
 (* 三、整理当前报警原因并清空本扫描请求；未被子流程重新提出的动作自动取消。 *)
 udiFault:=0;
 IF NOT xSafetyOK THEN udiFault:=1001; END_IF
+IF udiInterlockFault<>0 THEN udiFault:=udiInterlockFault; END_IF
 IF NOT xSimulation THEN udiFault:=3001; END_IF
 (* 仿真开关、接管掩码或验证模式变化，均清除初始化并回 Stopped。 *)
 IF (xSimulation<>xLastSimulation) OR (wRealMask<>wLastRealMask) OR (stReal.xRelativeVerify<>xLastRelativeVerify) THEN
@@ -128,6 +130,7 @@ xResetDevices:=rtReset.Q AND xSafetyOK AND xSimulation;
 IF xResetDevices THEN
     (* 复位时先按仍有效的故障注入判断原因，再清设备错误和整机锁存；原因未撤销不能复位。 *)
     udiFault:=0;
+    udiInterlockFault:=0;
     FOR i:=1 TO 17 DO IF stSim.axFault[i] THEN udiFault:=10000+INT_TO_UDINT(i); END_IF END_FOR
 END_IF
 fbAlarm(udiIncoming:=udiFault,xReset:=xResetDevices);
@@ -201,9 +204,12 @@ END_IF
 xPermit:=xSimulation AND xSafetyOK AND NOT stCommand.xStop AND (fbAlarm.udiLatched=0)
     AND ((stStatus.eState=E_MachineState.Initializing) OR (stStatus.eState=E_MachineState.Manual)
     OR (stStatus.eState=E_MachineState.Automatic));
+(* 互锁违规先清后置：违规在下面 fbInterlocks 之后才算出，本扫描存入，下扫描并入 udiFault。 *)
+udiInterlockFault:=0;
 fbInterlocks(xPermit:=xPermit,xManualMode:=(stStatus.eState=E_MachineState.Manual),
     stRecipe:=stActiveRecipe,stReal:=stReal,aRequest:=aRequest,aStatus:=aDeviceStatus);
 aSelectedCommand:=fbInterlocks.aCommand;
+IF fbInterlocks.xViolated THEN udiInterlockFault:=5000+UINT_TO_UDINT(fbInterlocks.uiViolatedDevice); END_IF
 fbDevices(xEnable:=xSimulation AND xSafetyOK,xSimulation:=xSimulation,xReset:=xResetDevices,
     xFaultHold:=(fbAlarm.udiLatched<>0),stSim:=stSim,stReal:=stReal,aCommand:=aSelectedCommand);
 aDeviceStatus:=fbDevices.aStatus;
@@ -219,8 +225,7 @@ stStatus.uiSafetySource:=uiSafetySource; stStatus.uiInitReject:=uiInitReject;
 stStatus.xRemoteStartStopAllowed:=xAllowRemoteStartStop;
 xAllHomed:=TRUE;
 FOR i:=1 TO 17 DO
-    (* 只有真实轴需要回零；D3 盘刀只做连续旋转不回零。气缸无回零动作，其 xHomed 表示
-       “姿态已由传感器确立”，由 FB_RealCylinder 维护，不参与回零判定。 *)
+    (* D3 盘刀只做连续旋转、不做回零，不参与“全部真实轴已回零”判定，否则该状态永远为 FALSE。 *)
     IF stReal.axRealDevice[i] AND (i<>3) AND (i<9) AND NOT aDeviceStatus[i].xHomed THEN xAllHomed:=FALSE; END_IF
 END_FOR
 stStatus.xRealAxesHomed:=xAllHomed;

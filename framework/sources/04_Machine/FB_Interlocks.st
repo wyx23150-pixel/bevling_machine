@@ -5,12 +5,15 @@ VAR_INPUT
 	xManualMode : BOOL; (* 当前处于手动模式；手动模式暂不做机构互锁，互锁只约束自动流程。 *)
 	stRecipe : ST_Recipe; (* 待校验配方或上层传入的运行配方，字段含义见 ST_Recipe。 *)
 	stReal : ST_RealDeviceSettings; (* 真实设备接管设置；预留输入，当前手动已默认不查互锁，判定未使用。 *)
+    tViolationDelay : TIME := T#200MS; (* 机构违规确认时间；连续保持这么久才认定，避免过渡瞬间误报。 *)
 	aRequest : ARRAY[1..17] OF ST_DeviceCommand; (* 初始化/手动/自动产生的原始请求，每周期先清空，再交互锁筛选。 *)
 	aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
 END_VAR
 VAR_OUTPUT
 	aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 统一设备请求数组 1..17；子流程写请求，设备管理器执行。 *)
 	uiBlockedDevice : UINT; (* 本扫描最后一个被互锁阻挡的设备索引；0 表示无阻挡，可结合设备状态排查。 *)
+    xViolated : BOOL; (* 机构互锁违规已确认：总许可通过、但机构条件不满足，且持续超过确认时间。 *)
+    uiViolatedDevice : UINT; (* 确认违规的设备索引；0 表示无。 *)
 END_VAR
 VAR
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
@@ -19,15 +22,22 @@ VAR
 	xKnifeUp : BOOL; (* G9 刀具处于提升端且设备无忙无故障。 *)
 	xPressUp : BOOL; (* G1 下压机构处于抬起端且设备无忙无故障。 *)
 	xClampOpen : BOOL; (* G8 夹爪处于打开端且设备无忙无故障。 *)
+    xPermitOK : BOOL; (* 仅总许可结果；用来区分"许可没通过"和"机构条件不满足"。 *)
+    xStructBlocked : BOOL; (* 本扫描是否有请求因机构条件被拒。 *)
+    uiStructDevice : UINT; (* 最后一个因机构条件被拒的设备索引。 *)
+    tonViolation : TON; (* 机构违规去抖定时器。 *)
 END_VAR
 
 (* 以下为普通程序互锁；实际急停、门锁、失气等安全功能须由最终硬件方案实现。 *)
 uiBlockedDevice:=0;
+    xStructBlocked:=FALSE;
+    uiStructDevice:=UINT#0;
 xKnifeUp:=F_At(aStatus[17],0.0); xPressUp:=F_At(aStatus[9],0.0);
 xClampOpen:=F_At(aStatus[16],0.0);
 FOR i:=1 TO 17 DO
     aCommand[i]:=aRequest[i];
-    xAllowed:=xPermit AND (i<>6);
+    xPermitOK:=xPermit AND (i<>6);
+    xAllowed:=xPermitOK;
     xMotion:=(aRequest[i].eAction=E_DeviceAction.Jog) OR
         ((aRequest[i].eAction=E_DeviceAction.Position) AND
         (ABS(aRequest[i].lrTarget-aStatus[i].lrPosition)>0.01));
@@ -73,7 +83,17 @@ FOR i:=1 TO 17 DO
     END_IF
     (* 互锁不满足则用 Stop 覆盖该设备请求；记录最后一个被阻挡编号，便于排查。 *)
     IF NOT xAllowed THEN
-        IF aRequest[i].eAction<>E_DeviceAction.None THEN uiBlockedDevice:=INT_TO_UINT(i); END_IF
+        IF aRequest[i].eAction<>E_DeviceAction.None THEN
+            uiBlockedDevice:=INT_TO_UINT(i);
+            (* 只有总许可通过时的拒绝才算机构违规；许可未通过已由 1001 等上报，不在这里重复。 *)
+            IF xPermitOK THEN
+                xStructBlocked:=TRUE;
+                uiStructDevice:=INT_TO_UINT(i);
+            END_IF
+        END_IF
         aCommand[i].eAction:=E_DeviceAction.Stop;
     END_IF
 END_FOR
+tonViolation(IN:=xStructBlocked,PT:=tViolationDelay);
+xViolated:=tonViolation.Q;
+IF xViolated THEN uiViolatedDevice:=uiStructDevice; ELSE uiViolatedDevice:=UINT#0; END_IF

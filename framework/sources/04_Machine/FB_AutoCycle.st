@@ -15,7 +15,7 @@ VAR_OUTPUT
     eStep : E_AutoStep; (* 自动主工序当前状态，见 E_AutoStep。 *)
     xDone : BOOL; (* 整循环完成的单扫描脉冲；机械手等三路收尾全部结束后才产生。 *)
     xError : BOOL; (* 本设备或本子流程发生故障；具体原因见对应错误码。 *)
-    udiErrorID : UDINT; (* 非法主步骤为 4800，主步超时为 4800+枚举值；支线错误则向上传递。 *)
+    udiErrorID : UDINT; (* 非法主步骤为 4800；主步超时为 4800+步号；步骤守护失败为 4800+步号+1，见下方守护表；支线错误则向上传递。 *)
     uiClearLengthStep : UINT; (* 避让支线 P 的当前步骤：10 升起 D5，20 移开 D4，1000 完成。 *)
     uiClearTransferStep : UINT; (* 避让支线 Q 当前步骤：10 降 G4，20 松 G3，30 降 G2，1000 完成。 *)
     uiPostStep : UINT; (* 收尾总步骤：10 抬刀，20 抬压，30 等待三路完成，1000 结束。 *)
@@ -30,6 +30,7 @@ VAR
     xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
     xSawSensorClear : BOOL; (* 本轮送料已观察到光电离开；须先有该标志再接受新到位，防止残留信号触发。 *)
     tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    xGuardOK : BOOL; (* 步骤守护判据：当前步依赖的前提是否仍满足，FALSE 时立即报错退出，不等步超时。 *)
     fbClear : FB_ClearanceUnit; (* 切割前两路并行避让流程。 *)
     fbPost : FB_PostCut; (* 切割后抬刀、抬压及三路收尾流程。 *)
 END_VAR
@@ -102,6 +103,36 @@ E_AutoStep.Complete:
 E_AutoStep.Fault: xError:=TRUE;
 ELSE xError:=TRUE; udiErrorID:=4800;
 END_CASE
+(* ===== 步骤守护表 =====
+   只判前提，不判目标：目标是本步自己要去达成的东西，由各步的 F_Done 判完成；
+   这里判的是这一步所依赖的前提还在不在。前提在进入该步时就已成立，
+   之后必须一直保持，一旦丢失立即报错退出，不再干等 tonStep 超时才发现。
+   每个步骤都要在下面有明确交代，无守护也要写出来，避免以后分不清
+   是真的不需要还是漏掉了。新增步骤时先到这里补一行。
+   错误码约定：4800 + 步号 + 1，例 SpindleOn=4881、Cutting=4891。
+   这里不主动发 Stop：报错后本流程转 Fault，下一扫描不再提出任何请求，
+   设备管理器收到 None 即停止，轴走 MC_Stop，气缸阀失电。 *)
+xGuardOK := TRUE;
+CASE eStep OF
+(* 无守护：要么在等外部条件，要么本步本身就在建立条件。 *)
+E_AutoStep.Idle, E_AutoStep.FeedWait, E_AutoStep.StopFeed,
+E_AutoStep.Push, E_AutoStep.Clearance, E_AutoStep.Rotate,
+E_AutoStep.PressDown, E_AutoStep.KnifeDown, E_AutoStep.StopCut,
+E_AutoStep.PostCut, E_AutoStep.Complete, E_AutoStep.Fault:
+    xGuardOK := TRUE;
+
+(* 起盘刀前：必须已压紧、已下刀，否则不该让刀转起来。 *)
+E_AutoStep.SpindleOn:
+    xGuardOK := F_At(aStatus[9],1.0) AND F_At(aStatus[17],1.0);
+
+(* 切割全程：压紧、下刀、盘刀运行三者都必须保持。 *)
+E_AutoStep.Cutting:
+    xGuardOK := F_At(aStatus[9],1.0) AND F_At(aStatus[17],1.0) AND aStatus[3].xActive;
+END_CASE
+IF NOT xGuardOK THEN
+    xError := TRUE;
+    udiErrorID := 4800 + TO_UDINT(eStep) + 1;
+END_IF
 IF tonStep.Q THEN xError:=TRUE; udiErrorID:=4800+TO_UDINT(eStep); END_IF
 END_IF
 (* 子功能块必须每扫描调用，包括失能时复位；上方状态判断看到的是此前反馈。 *)
