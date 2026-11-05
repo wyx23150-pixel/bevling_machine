@@ -14,7 +14,7 @@
    6     D6    保留                -          -          -          编号空置，不要使用
    7     D7    机械手平移          Axis       仿真       -
    8     D8    平台旋转轴          Axis       已接       ASDA_E3_1  台达 ASDA-B3-E
-   9     G1    下压气缸            Cylinder   已接       xDoG1Valve 0=抬起，1=下压
+   9     G1    下压气缸            Cylinder   已接       xDoG1ValveL/R  0=抬起，1=下压；左右双缸同动
    10    G2    侧挡升降            Cylinder   已接       xDoG2Valve 0=提升，1=下降
    11    G3    推动气缸            Cylinder   已接       xDoG3Valve 0=放开，1=侧推
    12    G4    流利条升降          Cylinder   仿真       -          初始在提升端

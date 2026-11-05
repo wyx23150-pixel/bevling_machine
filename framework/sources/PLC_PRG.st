@@ -19,17 +19,24 @@ fbCommunication(xEnable:=GVL_Modbus.xEnable,stStatus:=GVL_Interface.stStatus,
 (* 2. 安全许可旁路：一级开关与二级确认同时置位才生效，单开关无效。 *)
 xSafetyBypassActive:=F_SafetyBypassActive(GVL_RealDevice.stSettings);
 (* 3. 整机选择操作来源，调度工序，通过互锁后统一调用设备。 *)
-fbMachine(xSimulation:=GVL_Parameters.xSimulation,stPanel:=GVL_Interface.stPanel,
-    stRemote:=fbCommunication.stCommand,xRemoteRequest:=fbCommunication.xRequest,
+fbMachine(
+	xSimulation:=GVL_Parameters.xSimulation,
+	stPanel:=GVL_Interface.stPanel,
+    stRemote:=fbCommunication.stCommand,
+	xRemoteRequest:=fbCommunication.xRequest,
     xAllowRemoteStartStop:=GVL_Parameters.xAllowRemoteStartStop,
-    wRemoteSequence:=fbCommunication.wRequestSequence,aManual:=GVL_Interface.aManual,
-    stRecipe:=GVL_Parameters.stRecipe,stSim:=GVL_Simulation.stSettings,
-    stReal:=GVL_RealDevice.stSettings,xSafetyBypassActive:=xSafetyBypassActive,
-    xRealSafetyOK:=GVL_IO.xSafetyOK,xRealMaterial:=GVL_IO.xMaterialAtLength);
+    wRemoteSequence:=fbCommunication.wRequestSequence,
+	aManual:=GVL_Interface.aManual,
+    stRecipe:=GVL_Parameters.stRecipe,
+	stSim:=GVL_Simulation.stSettings,
+    stReal:=GVL_RealDevice.stSettings,
+	xSafetyBypassActive:=xSafetyBypassActive,
+    xRealSafetyOK:=GVL_IO.xSafetyOK,
+	xRealMaterial:=GVL_IO.xMaterialAtLength);
 (* 4. 将整机反馈发布到监控接口，建议调试时从这里查看主步骤和支线步骤。 *)
 GVL_Interface.stStatus:=fbMachine.stStatus;
 GVL_Interface.aDeviceStatus:=fbMachine.aDeviceStatus;
 (* 5. 形成逻辑输出并下沉到物理点；真实气缸阀电平在此写入 GVL_IO_Physical。 *)
 fbIO(uiMaterialModel:=fbMachine.stStatus.uiActiveMaterialModel,aCommand:=fbMachine.aSelectedCommand,
-    aStatus:=fbMachine.aDeviceStatus,aValveOut:=fbMachine.aValveOut,
+        aStatus:=fbMachine.aDeviceStatus,aValveOut:=fbMachine.aValveOut,aValveOutAux:=fbMachine.aValveOutAux,
     axOutputs:=GVL_IO.axDigitalOutputs,axG2RelayDemand:=GVL_IO.axG2RelayDemand);

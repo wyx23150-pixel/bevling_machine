@@ -12,6 +12,7 @@ END_VAR
 VAR_OUTPUT
 	aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
 	aValveOut : ARRAY[1..17] OF BOOL; (* 各设备的阀电气输出电平 1..17；只有已接管的真实气缸可能为 TRUE，供物理映射层取用。 *)
+	aValveOutAux : ARRAY[1..17] OF BOOL; (* 第二个执行器的阀电气电平 1..17；当前只有 G1 双压板的 [9] 有效，其余恒 FALSE。 *)
 END_VAR
 VAR
 	aConfig : ARRAY[1..17] OF ST_DeviceConfig; (* 设备配置数组，首扫描按固定编号设置类型和初始姿态。 *)
@@ -31,7 +32,6 @@ VAR
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
 
-(* 只在首扫描建立设备类型和初始位置；D6 保留，G4 初始在提升端，其余位置取配置默认。 *)
 IF NOT xBooted THEN
 	aConfig[1].eKind := E_DeviceKind.Motor;
 	aConfig[2].eKind := E_DeviceKind.Axis;
@@ -50,6 +50,10 @@ IF NOT xBooted THEN
 			aConfig[i].lrMinPosition := 0.0; aConfig[i].lrMaxPosition := 1.0;
 		END_IF
 	END_FOR
+	(* D2 切割走刀：配方要求 200mm/s、加速度 500；默认 100/50 会把速度削到 100 并拖长加减速段。 *)
+	aConfig[2].lrMaxVelocity := 300.0;
+	aConfig[2].lrMaxAcceleration := 500.0;
+	aConfig[2].lrMaxDeceleration := 500.0;
 	xBooted := TRUE;
 END_IF
 
@@ -60,7 +64,7 @@ FOR i := 1 TO 17 DO
 END_FOR
 
 (* 三个真实轴实例每扫描必须无条件调用；轴形参写死，无法放进 FOR 循环。 *)
-fbRealD2(Axis := Axis_1, xUseReal := axUseReal[2], xEnable := xEnable, xReset := xReset,
+fbRealD2(Axis := pandao, xUseReal := axUseReal[2], xEnable := xEnable, xReset := xReset,
 	xFaultHold := xFaultHold,
 	stConfig := aConfig[2], stCommand := aCommand[2], stReal := stReal);
 fbRealD3(Axis := pandao, xUseReal := axUseReal[3], xEnable := xEnable, xReset := xReset,
@@ -74,7 +78,9 @@ fbRealD8(Axis := ASDA_E3_1, xUseReal := axUseReal[8], xEnable := xEnable, xReset
    极性默认 FALSE：传感器高电平有效、阀高电平使能。接线反了只改这里一行，不动流程与互锁。 *)
 fbRealG1(xUseReal := axUseReal[9], xEnable := xEnable, xReset := xReset,
 	xFaultHold := xFaultHold,
-	xSensorRetract := GVL_IO_Physical.xDiG1Retract, xSensorExtend := GVL_IO_Physical.xDiG1Extend,
+	xSensorRetract := GVL_IO_Physical.xDiG1LRetract, xSensorExtend := GVL_IO_Physical.xDiG1LExtend,
+	xSensorRetract2 := GVL_IO_Physical.xDiG1RRetract, xSensorExtend2 := GVL_IO_Physical.xDiG1RExtend,
+	xUseSecond := TRUE,
 	xInvertSensors := FALSE, xInvertValve := FALSE,
 	stConfig := aConfig[9], stCommand := aCommand[9]);
 fbRealG2(xUseReal := axUseReal[10], xEnable := xEnable, xReset := xReset,
@@ -95,13 +101,13 @@ fbRealG9(xUseReal := axUseReal[17], xEnable := xEnable, xReset := xReset,
 
 (* 每周期按接管标志二选一：真实实例直接回填，否则按设备类型走仿真。 *)
 FOR i := 1 TO 17 DO
-	aValveOut[i] := FALSE;
+	aValveOut[i] := FALSE; aValveOutAux[i] := FALSE;
 	IF axUseReal[i] THEN
 		CASE i OF
 		2: aStatus[i] := fbRealD2.stStatus;
 		3: aStatus[i] := fbRealD3.stStatus;
 		8: aStatus[i] := fbRealD8.stStatus;
-		9: aStatus[i] := fbRealG1.stStatus; aValveOut[i] := fbRealG1.xValve;
+		9: aStatus[i] := fbRealG1.stStatus; aValveOut[i] := fbRealG1.xValve; aValveOutAux[i] := fbRealG1.xValve2;
 		10: aStatus[i] := fbRealG2.stStatus; aValveOut[i] := fbRealG2.xValve;
 		11: aStatus[i] := fbRealG3.stStatus; aValveOut[i] := fbRealG3.xValve;
 		17: aStatus[i] := fbRealG9.stStatus; aValveOut[i] := fbRealG9.xValve;

@@ -6,6 +6,7 @@ VAR_INPUT
     aCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 最终设备命令，当前仅用于诊断，不直接驱动输出。 *)
     aStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 各设备的反馈数组 1..17，供判断忙、完成序号、故障和位置。 *)
     aValveOut : ARRAY[1..17] OF BOOL; (* 设备管理器给出的阀电气电平 1..17，真实气缸在此下沉到物理点。 *)
+    aValveOutAux : ARRAY[1..17] OF BOOL; (* 第二个执行器的阀电气电平 1..17；G1 右压板在此下沉到物理点。 *)
 END_VAR
 VAR_IN_OUT
     axOutputs : ARRAY[0..31] OF BOOL; (* 逻辑数字输出数组 0..31，仍按 G2 需求填写，供在线监视与后续扩展。 *)
@@ -21,7 +22,8 @@ FOR i:=1 TO 3 DO axG2RelayDemand[i]:=FALSE; END_FOR
 
 (* ===== 1. 真实气缸阀输出：直接写物理映射符号，TRUE=阀得电=设备动作 ===== *)
 (* 未接管时 aValveOut 为 FALSE，物理点随之失电，不会带着上一个状态一直通电。 *)
-GVL_IO_Physical.xDoG1Valve := aValveOut[9];
+GVL_IO_Physical.xDoG1ValveL := aValveOut[9];
+GVL_IO_Physical.xDoG1ValveR := aValveOutAux[9];
 GVL_IO_Physical.xDoG2Valve := aValveOut[10];
 GVL_IO_Physical.xDoG3Valve := aValveOut[11];
 GVL_IO_Physical.xDoG9Valve := aValveOut[17];

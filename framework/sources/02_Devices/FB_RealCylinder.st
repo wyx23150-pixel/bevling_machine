@@ -7,10 +7,13 @@ VAR_INPUT
 	xReset : BOOL; (* 故障复位上升沿；清锁存错误并允许重新建立姿态。 *)
 	xSensorRetract : BOOL; (* 缩回到位传感器原始电平，TRUE 表示该端有信号。 *)
 	xSensorExtend : BOOL; (* 伸出到位传感器原始电平，TRUE 表示该端有信号。 *)
+	xSensorRetract2 : BOOL; (* 第二组（右压板）缩回到位原始电平；仅 xUseSecond 为 TRUE 时参与判定。 *)
+	xSensorExtend2 : BOOL; (* 第二组（右压板）伸出到位原始电平；仅 xUseSecond 为 TRUE 时参与判定。 *)
+	xUseSecond : BOOL := FALSE; (* TRUE 表示由两个同步执行器组成：两组传感器必须同时到位才算该端到位。 *)
 	xInvertSensors : BOOL; (* TRUE 表示两个传感器接线为低电平有效，本层统一取反，不动上层。 *)
 	xInvertValve : BOOL; (* TRUE 表示阀为低电平使能；默认 FALSE，即高电平使能。 *)
 	xFaultHold : BOOL := FALSE; (* 整机故障保持：TRUE 时阀立即失电并撤销保位，直到复位。 *)
-	tSensorTimeout : TIME := T#3S; (* 两端均无信号达到该时间判为传感器丢失，报 3004。 *)
+	tSensorTimeout : TIME := T#3S; (* 两端均无信号达到该时间判为传感器丢失，报 3004；双执行器时也包含两侧不同步。 *)
 	tTravelTimeout : TIME := T#10S; (* 命令发出后未到位达到该时间判为动作超时，报 3005。 *)
 	stConfig : ST_DeviceConfig; (* 行程范围，语义与仿真侧一致；气缸只使用 0/1 两端。 *)
 	stCommand : ST_DeviceCommand; (* 上层统一设备命令，气缸只响应 Position 的 0/1 目标。 *)
@@ -18,6 +21,7 @@ END_VAR
 VAR_OUTPUT
 	stStatus : ST_DeviceStatus; (* 与 FB_SimDevice 语义一致；lrPosition 取 0.0 缩回、1.0 伸出。 *)
 	xValve : BOOL; (* 阀电气输出电平，已含 xInvertValve；直接接物理输出点。 *)
+	xValve2 : BOOL; (* 第二个执行器的阀电气输出电平；xUseSecond 为 FALSE 时恒为 FALSE。 *)
 END_VAR
 VAR
 	rtReset : R_TRIG; (* 复位上升沿。 *)
@@ -48,6 +52,14 @@ END_IF
 xSenseRetract := xSensorRetract XOR xInvertSensors;
 xSenseExtend := xSensorExtend XOR xInvertSensors;
 
+(* 双执行器：两组必须同时到位才算该端到位。
+   左侧在上、右侧在下时两个都为 FALSE，自然落进下面的“两端都无信号”分支：
+   保持上次姿态，持续 tSensorTimeout 才报 3004，与单缸中间态同一套处理。 *)
+IF xUseSecond THEN
+	xSenseRetract := xSenseRetract AND (xSensorRetract2 XOR xInvertSensors);
+	xSenseExtend := xSenseExtend AND (xSensorExtend2 XOR xInvertSensors);
+END_IF
+
 tonNoSensor(IN := xUseReal AND NOT xSenseRetract AND NOT xSenseExtend, PT := tSensorTimeout);
 
 IF xSenseRetract AND xSenseExtend THEN
@@ -74,7 +86,7 @@ IF NOT xUseReal THEN
 	xCmdValid := FALSE; xTravelling := FALSE; udiLastID := 0;
 	stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
 	stStatus.udiAcceptedID := 0; stStatus.udiCompletedID := 0;
-ELSIF stStatus.xError OR xFaultHold THEN
+ELSIF NOT xEnable OR stStatus.xError OR xFaultHold THEN
 	(* 故障或整机故障保持时阀失电，不带错误继续动作 *)
 	xCmdValid := FALSE; xTravelling := FALSE;
 	stStatus.xReady := FALSE; stStatus.xBusy := FALSE; stStatus.xActive := FALSE;
@@ -137,10 +149,13 @@ END_IF
 
 (* ===== 5. 阀输出：按保位命令持续输出，不是只在动作过程中输出 ===== *)
 xValve := FALSE;
+xValve2 := FALSE;
 IF xCmdValid AND xUseReal AND NOT stStatus.xError AND NOT xFaultHold THEN
 	xValve := xCmdExtend;
+	IF xUseSecond THEN xValve2 := xCmdExtend; END_IF
 END_IF
 IF xInvertValve THEN xValve := NOT xValve; END_IF
+IF xInvertValve AND xUseSecond THEN xValve2 := NOT xValve2; END_IF
 
 (* ===== 6. 收尾 ===== *)
 stStatus.xReady := stStatus.xReady AND xUseReal AND NOT stStatus.xError;

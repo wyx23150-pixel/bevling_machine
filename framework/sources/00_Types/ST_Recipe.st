@@ -2,12 +2,13 @@
 TYPE ST_Recipe :
 STRUCT
 uiMaterialModel : UINT := 300; (* 料型选择，仅支持 300/400/600，对应 G2 三个继电器；不是位移。 *)
-lrCutHome : LREAL := 0.0; (* D2 回刀起点；切割终点为该位置加 lrCutLength。 *)
-lrCutLength : LREAL := 80.0; (* D2 本次切割行程，示例默认 80；到达指定终点才结束切割。 *)
-lrCutVelocity : LREAL := 10.0; (* D2 切割进给速度；示例参数，接实机前确认工程单位。 *)
+lrCutHome : LREAL := 100.0; (* D2 切割起点，也是回刀终点；切割终点 = 该位置 + lrCutLength。 *)
+lrCutLength : LREAL := 900.0; (* D2 本次切割行程；配合 lrCutHome=100 得到终点 1000。 *)
+lrCutVelocity : LREAL := 200.0; (* D2 切割进给速度，mm/s；900mm 约 5 秒走完。 *)
+lrReturnVelocity : LREAL := 100.0; (* D2 回刀速度，mm/s；回刀行程长，与切割速度分开设置。 *)
 lrPositionVelocity : LREAL := 10.0; (* 其余定位动作的公共请求速度，当前为仿真示例。 *)
 lrBeltVelocity : LREAL := 10.0; (* D1 皮带运行速度请求，当前未换算到实际驱动器单位。 *)
-lrSpindleVelocity : LREAL := 10.0; (* D3 盘刀运行速度请求，当前不是已标定的实际转速。 *)
+lrSpindleVelocity : LREAL := 5.0; (* D3 盘刀运行速度请求，mm/s；不是已标定的实际转速。 *)
 lrLengthPosition : LREAL := 100.0; (* D4 定长检测工作位置；到位后再令 D5 下降。 *)
 lrLengthClear : LREAL := 0.0; (* D4 切割前避让位置；移动前须 D5 升起。 *)
 lrRotateAngle : LREAL := 0.0; (* D8 平台旋转目标角度，示例范围为正负 360，实机角度单位待标定。 *)
@@ -19,4 +20,3 @@ tSpray : TIME := T#300MS; (* 收尾支线 A 的喷油保持时间；该步结束
 tStepTimeout : TIME := T#30S; (* 单动作步骤超时时间；正常送料等料阶段不套用此超时。 *)
 END_STRUCT
 END_TYPE
-

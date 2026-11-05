@@ -37,7 +37,7 @@ CASE uiStep OF
 aCommand[13] := F_Command(E_DeviceAction.Run, udiToken, 0.0, 0.0);
 IF tonSpray.Q THEN uiStep := 20; END_IF;
 20: (* A020 结束喷油请求，D2 回到 lrCutHome，等待到位。 *)
-aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrPositionVelocity);
+aCommand[2] := F_Command(E_DeviceAction.Position, udiToken, stRecipe.lrCutHome, stRecipe.lrReturnVelocity);
 IF F_Done(aStatus[2], udiToken) THEN uiStep := 1000; END_IF;
 1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;
 ELSE xError := TRUE; udiErrorID := 4300;

@@ -20,6 +20,7 @@ VAR_OUTPUT
 	aDeviceStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 设备管理器汇总反馈，索引 1..17；供工序判断及在线监控。 *)
 	aSelectedCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 通过统一互锁后的最终设备请求，交设备管理器执行。 *)
 	aValveOut : ARRAY[1..17] OF BOOL; (* 各设备阀电气电平，索引同设备号；供物理映射层下沉到真实输出点。 *)
+	aValveOutAux : ARRAY[1..17] OF BOOL; (* 第二个执行器的阀电气电平，索引同设备号；当前只有 G1 双压板使用。 *)
 END_VAR
 VAR
 	stCommand : ST_OperatorCommand; (* 本周期选择并合并后的整机命令；本地停止始终优先于远程。 *)
@@ -214,6 +215,7 @@ fbDevices(xEnable:=xSimulation AND xSafetyOK,xSimulation:=xSimulation,xReset:=xR
     xFaultHold:=(fbAlarm.udiLatched<>0),stSim:=stSim,stReal:=stReal,aCommand:=aSelectedCommand);
 aDeviceStatus:=fbDevices.aStatus;
 aValveOut:=fbDevices.aValveOut;
+aValveOutAux:=fbDevices.aValveOutAux;
 fbPlant(xEnable:=xSimulation,stSettings:=stSim,aStatus:=aDeviceStatus);
 (* 十二、集中发布状态；机械手/定长/回刀卡在哪一步，可从对应 ui...Step 追踪。 *)
 stStatus.eMode:=stCommand.eMode; stStatus.eAutoStep:=fbAuto.eStep;
