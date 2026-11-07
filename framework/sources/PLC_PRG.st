@@ -5,19 +5,40 @@ VAR
 	fbCommunication : FB_ModbusInterface; (* 通信命令解析和状态打包实例；打包的是上一扫描已发布的整机反馈。 *)
 	fbMachine : FB_Machine; (* 整机调度实例，包含初始化、手动、自动、互锁、报警和设备管理。 *)
 	fbIO : FB_IOMap; (* 逻辑 I/O 映射实例，当前只形成诊断需求，不驱动真实输出。 *)
+	fbLamp : FB_Indicator; (* 面板两色指示灯逻辑实例；纯输出，不参与控制。 *)
 	xSafetyBypassActive : BOOL; (* 安全许可两级旁路已生效；仅当一级开关与二级确认同时置位。 *)
 END_VAR
-
 (* 本程序只在 ETHERCAT1 中周期调用一次；内部功能块沿本调用链每扫描执行。 *)
+(* 0. 面板物理点 -> 逻辑面板：常开/常闭等极性只在这层处理，接线接反改这里一行即可。
+   用 xUseRealPanel 而不是 xSimulation 选来源，因为 xSimulation 必须恒为 TRUE（FALSE 整机报 3001），
+   真实设备是靠 axRealDevice 逐台接管的，物理按钮与设备仿真必须能同时存在。 *)
+IF GVL_Parameters.xUseRealPanel THEN
+    GVL_IO.stPanelInputs.xAutoMode   := GVL_IO_Physical.xDiPanelAutoMode;
+    GVL_IO.stPanelInputs.xInitialize := GVL_IO_Physical.xDiPanelInit;
+    GVL_IO.stPanelInputs.xStart      := GVL_IO_Physical.xDiPanelStart;
+    GVL_IO.stPanelInputs.xResetAlarm := GVL_IO_Physical.xDiPanelReset;
+    GVL_IO.stPanelInputs.xRunStart   := GVL_IO_Physical.xDiPanelRunStart;
+    (* 停止按钮是常闭触点：未按=TRUE、按下=FALSE。这里取反成"TRUE=按下"，
+       物理下降沿在逻辑层变回上升沿，FB_Machine 只认一个沿，不用分两种按钮。 *)
+    GVL_IO.stPanelInputs.xRunStop    := NOT GVL_IO_Physical.xDiPanelRunStop;
+    (* 安全许可 = 旋钮在许可位 且 急停未按下。急停是常开触点，按下=TRUE=不安全。
+       注意这是联锁逻辑，不是安全级回路；断线时读到 FALSE 会被当成"许可成立"。 *)
+    GVL_IO.xSafetyOK := GVL_IO_Physical.xDiPanelSafetyPermit AND NOT GVL_IO_Physical.xDiEStop;
+ELSE
+    (* 仿真面板调试：许可沿用仿真设置，物理旋钮与急停不参与，否则没有面板时永远过不了许可。 *)
+    GVL_IO.xSafetyOK := GVL_Simulation.stSettings.xSafetyOK;
+END_IF
 (* 先解码实体/仿真面板；模式旋钮为唯一模式来源，随后发布到只读监控接口。 *)
 fbPanel(xSimulation:=GVL_Parameters.xSimulation,stReal:=GVL_IO.stPanelInputs,
-    stSim:=GVL_Simulation.stPanelInputs,xContinuous:=GVL_Parameters.xContinuous);
+    stSim:=GVL_Simulation.stPanelInputs,xContinuous:=GVL_Parameters.xContinuous,
+    xUseRealPanel:=GVL_Parameters.xUseRealPanel);
 GVL_Interface.stPanel:=fbPanel.stCommand;
 (* 1. 解析上位机新命令并打包上一扫描状态，供本扫描整机处理。 *)
 fbCommunication(xEnable:=GVL_Modbus.xEnable,stStatus:=GVL_Interface.stStatus,
     aStatus:=GVL_Interface.aDeviceStatus,awRx:=GVL_Modbus.awRx,awTx:=GVL_Modbus.awTx);
-(* 2. 安全许可旁路：一级开关与二级确认同时置位才生效，单开关无效。 *)
-xSafetyBypassActive:=F_SafetyBypassActive(GVL_RealDevice.stSettings);
+(* 2. 安全许可旁路：一级开关与二级确认同时置位才生效，单开关无效。
+   旁路只替代安全许可旋钮，绝不能盖掉急停：急停按下时旁路同样失效。 *)
+xSafetyBypassActive:=F_SafetyBypassActive(GVL_RealDevice.stSettings) AND NOT GVL_IO_Physical.xDiEStop;
 (* 3. 整机选择操作来源，调度工序，通过互锁后统一调用设备。 *)
 fbMachine(
 	xSimulation:=GVL_Parameters.xSimulation,
@@ -40,3 +61,8 @@ GVL_Interface.aDeviceStatus:=fbMachine.aDeviceStatus;
 fbIO(uiMaterialModel:=fbMachine.stStatus.uiActiveMaterialModel,aCommand:=fbMachine.aSelectedCommand,
         aStatus:=fbMachine.aDeviceStatus,aValveOut:=fbMachine.aValveOut,aValveOutAux:=fbMachine.aValveOutAux,
     axOutputs:=GVL_IO.axDigitalOutputs,axG2RelayDemand:=GVL_IO.axG2RelayDemand);
+(* 6. 面板指示灯：只读整机状态，不参与任何控制，放在最后算以保证与本扫描状态一致。 *)
+fbLamp(xRunState:=fbMachine.stStatus.xRunState,eState:=fbMachine.stStatus.eState,
+    eMode:=fbMachine.stStatus.eMode,udiAlarm:=fbMachine.stStatus.udiAlarm);
+GVL_IO_Physical.xDoLampGreen:=fbLamp.xGreen;
+GVL_IO_Physical.xDoLampRed:=fbLamp.xRed;

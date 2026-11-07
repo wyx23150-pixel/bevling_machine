@@ -37,6 +37,9 @@ VAR
 	rtInitialize : R_TRIG; (* 初始化按钮上升沿检测。 *)
 	rtStart : R_TRIG; (* 自动启动按钮上升沿检测。 *)
 	rtReset : R_TRIG; (* 报警复位按钮上升沿检测。 *)
+	rtRunStart : R_TRIG; (* 启动按钮上升沿：置运行态锁存。 *)
+	rtRunStop : R_TRIG; (* 停止按钮上升沿：清运行态锁存（常闭触点在映射层已取反）。 *)
+	xRunState : BOOL; (* 运行态锁存：按一下启动置 TRUE，按一下停止/安全丢失/进故障清 FALSE；全机唯一的"允许动作"判据。 *)
 	udiCounter : UDINT; (* 全机共享的动作序号计数器，通过引用传递；由 F_NextID 分配，0 不使用。 *)
 	udiFault : UDINT; (* 本扫描整理出的报警原因；设备错误使用 10000+设备索引。 *)
 	xSafetyOK : BOOL; (* 安全许可接口或仿真许可，TRUE 允许；不等同于安全级急停回路。 *)
@@ -53,25 +56,30 @@ VAR
 	xAnyReal : BOOL; (* 是否有任意设备由真实轴接管；全 FALSE 时后续分支与改造前逐语句一致。 *)
     udiInterlockFault : UDINT; (* 互锁违规码；互锁在报警汇总之后才调用，故本扫描存入、下扫描并入 udiFault。 *)
 	xAllHomed : BOOL; (* 所有已接管的真实轴都已完成回零；未接真实轴时为 TRUE，用于状态发布。 *)
-	wRealMask : WORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴。 *)
-	wLastRealMask : WORD; (* 上扫描接管掩码；变化时清除初始化并回 Stopped。 *)
+	dwRealMask : DWORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴；用 DWORD 是因为索引 17 需要第 16 位，WORD 会溢出丢位。 *)
+	dwLastRealMask : DWORD; (* 上扫描接管掩码；变化时清除初始化并回 Stopped。 *)
 	xLastRelativeVerify : BOOL; (* 上扫描相对验证开关；切换时清除初始化并回 Stopped。 *)
 	uiSafetySource : UINT; (* 安全许可来源：0 仿真源，1 真实源，2 调试旁路。 *)
 	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝；回零已并入初始化流程，当前无拒绝分支，字段预留。 *)
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
-
 (* 零、派生混跑标志：axRealDevice 全 FALSE 时 xAnyReal 为 FALSE，后续所有分支与改造前一致。 *)
-xAnyReal:=FALSE; wRealMask:=0;
+xAnyReal:=FALSE; dwRealMask:=0;
 FOR i:=1 TO 17 DO
     IF stReal.axRealDevice[i] THEN
         xAnyReal:=TRUE;
-        wRealMask:=wRealMask OR SHL(WORD#1,i-1);
+        dwRealMask:=dwRealMask OR SHL(DWORD#1,i-1);
     END_IF
 END_FOR
 
 (* 一、选择命令来源：本地默认优先；远程须授权，本地停止始终有效。 *)
 stCommand:=stPanel;
+(* 运行态锁存：按一下切换，不靠按钮保持。停止优先——同扫描两个都按下取停止。
+   这是全机唯一的"允许动作"判据；下游不再出现单个按钮电平。 *)
+rtRunStart(CLK:=stCommand.xRunStart);
+rtRunStop(CLK:=stCommand.xRunStop);
+IF rtRunStart.Q THEN xRunState:=TRUE; END_IF
+IF rtRunStop.Q OR stCommand.xStop THEN xRunState:=FALSE; END_IF
 (* 模式、初始化、复位来自实体面板；远程只可追加经过授权的启停，不能替换整份本地命令。 *)
 xRemoteAccepted:=FALSE;
 IF xRemoteRequest THEN
@@ -82,7 +90,7 @@ IF xRemoteRequest THEN
             stStatus.uiRemoteResult:=0; xRemoteAccepted:=TRUE;
         ELSIF stRemote.xStart THEN
             IF (stPanel.eMode=E_MachineMode.Automatic)
-               AND (stStatus.eState=E_MachineState.Ready) AND NOT stPanel.xStop THEN
+               AND (stStatus.eState=E_MachineState.Ready) AND xRunState THEN
                 stStatus.uiRemoteResult:=0; xRemoteAccepted:=TRUE;
             ELSE stStatus.uiRemoteResult:=3; END_IF
         ELSE stStatus.uiRemoteResult:=2; END_IF
@@ -102,6 +110,8 @@ IF xAnyReal THEN
     ELSE xMaterial:=fbPlant.xMaterialAtLength; END_IF
 ELSIF xSimulation THEN xSafetyOK:=stSim.xSafetyOK; xMaterial:=fbPlant.xMaterialAtLength;
 ELSE xSafetyOK:=xRealSafetyOK; xMaterial:=xRealMaterial; END_IF
+(* 安全许可丢失立即清运行态：急停或旋钮离开许可位后，恢复必须重新按启动，不能自己回到运行。 *)
+IF NOT xSafetyOK THEN xRunState:=FALSE; END_IF
 (* 安全来源：0 仿真源，1 真实源，2 调试旁路。 *)
 IF NOT xAnyReal THEN uiSafetySource:=0;
 ELSIF xSafetyBypassActive AND NOT xRealSafetyOK THEN uiSafetySource:=2;
@@ -112,10 +122,10 @@ IF NOT xSafetyOK THEN udiFault:=1001; END_IF
 IF udiInterlockFault<>0 THEN udiFault:=udiInterlockFault; END_IF
 IF NOT xSimulation THEN udiFault:=3001; END_IF
 (* 仿真开关、接管掩码或验证模式变化，均清除初始化并回 Stopped。 *)
-IF (xSimulation<>xLastSimulation) OR (wRealMask<>wLastRealMask) OR (stReal.xRelativeVerify<>xLastRelativeVerify) THEN
+IF (xSimulation<>xLastSimulation) OR (dwRealMask<>dwLastRealMask) OR (stReal.xRelativeVerify<>xLastRelativeVerify) THEN
     stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE;
 END_IF
-xLastSimulation:=xSimulation; wLastRealMask:=wRealMask; xLastRelativeVerify:=stReal.xRelativeVerify;
+xLastSimulation:=xSimulation; dwLastRealMask:=dwRealMask; xLastRelativeVerify:=stReal.xRelativeVerify;
 FOR i:=1 TO 17 DO
     IF aDeviceStatus[i].xError THEN udiFault:=10000+INT_TO_UDINT(i); END_IF
     aRequest[i]:=stEmpty;
@@ -124,7 +134,14 @@ END_FOR
 IF (stStatus.eState=E_MachineState.Automatic) OR (stStatus.eState=E_MachineState.Manual) THEN
     IF stCommand.eMode<>eActiveMode THEN stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE; END_IF
 END_IF
-IF stCommand.xStop THEN stStatus.eState:=E_MachineState.Stopped; xInitialized:=FALSE; END_IF
+(* 停止是运行态锁存的电平判据：按一下停止后锁存一直为 FALSE，直到再按启动。
+   这里用 xRunState 而不是按钮电平，是为了让"停着"和"按钮松开"不再有区别。 *)
+IF NOT xRunState THEN
+    IF (stStatus.eState<>E_MachineState.Stopped) AND (stStatus.eState<>E_MachineState.Fault) THEN
+        stStatus.eState:=E_MachineState.Stopped;
+    END_IF
+    xInitialized:=FALSE;
+END_IF
 IF udiFault<>0 THEN stStatus.eState:=E_MachineState.Fault; xInitialized:=FALSE; END_IF
 (* 五、复位设备和首报警锁存；必须先撤销故障原因，复位不自动启动。 *)
 xResetDevices:=rtReset.Q AND xSafetyOK AND xSimulation;
@@ -140,7 +157,7 @@ IF (stStatus.eState=E_MachineState.Fault) AND (fbAlarm.udiLatched=0) AND xResetD
 END_IF
 IF fbAlarm.udiLatched<>0 THEN stStatus.eState:=E_MachineState.Fault; END_IF
 (* 六、仅停止态接受初始化；配方通过检查后取快照。 *)
-IF rtInitialize.Q AND NOT stCommand.xStop THEN
+IF rtInitialize.Q AND xRunState THEN
     (* 真实轴的回零已并入初始化第 25 步，这里不再要求预先打开相对验证。 *)
     IF (stStatus.eState=E_MachineState.Stopped) AND xSimulation AND xSafetyOK AND F_RecipeValid(stRecipe) THEN
         stActiveRecipe:=stRecipe; stStatus.eState:=E_MachineState.Initializing;
@@ -150,16 +167,16 @@ IF rtInitialize.Q AND NOT stCommand.xStop THEN
         IF xRemoteAccepted THEN stStatus.uiRemoteResult:=3; END_IF
     END_IF
 END_IF
-(* 七、手动不依赖初始化：停机态只要模式在手动且没按停止就直接进入，开机后不必先跑初始化。
-   自动仍必须先完成初始化到 Ready；停止按钮按住时留在 Stopped，松开后自动回到手动。 *)
+(* 七、手动不依赖初始化：停机态只要模式在手动且运行态成立就直接进入，开机后不必先跑初始化。
+   自动仍必须先完成初始化到 Ready；按过停止后运行态为假，手动也进不去，必须重新按启动。 *)
 IF (stStatus.eState=E_MachineState.Stopped) AND (stCommand.eMode=E_MachineMode.Manual)
-   AND NOT stCommand.xStop THEN
+   AND xRunState THEN
     stStatus.eState:=E_MachineState.Manual; eActiveMode:=E_MachineMode.Manual;
 END_IF
 IF stStatus.eState=E_MachineState.Ready THEN
     IF stCommand.eMode=E_MachineMode.Manual THEN
         stStatus.eState:=E_MachineState.Manual; eActiveMode:=E_MachineMode.Manual;
-    ELSIF xStartRequest AND NOT stCommand.xStop THEN
+    ELSIF xStartRequest AND xRunState THEN
         IF stReal.xRelativeVerify THEN
             (* 相对验证模式下绝对位置不作生产依据，禁止进自动。 *)
             stStatus.uiRemoteResult:=4;
@@ -202,7 +219,7 @@ IF fbAuto.xDone THEN
     IF NOT stCommand.xContinuous THEN stStatus.eState:=E_MachineState.Ready; END_IF
 END_IF
 (* 十一、总许可与机构互锁筛选请求，再调用设备管理器；流程判断使用此前的反馈。 *)
-xPermit:=xSimulation AND xSafetyOK AND NOT stCommand.xStop AND (fbAlarm.udiLatched=0)
+xPermit:=xSimulation AND xSafetyOK AND xRunState AND (fbAlarm.udiLatched=0)
     AND ((stStatus.eState=E_MachineState.Initializing) OR (stStatus.eState=E_MachineState.Manual)
     OR (stStatus.eState=E_MachineState.Automatic));
 (* 互锁违规先清后置：违规在下面 fbInterlocks 之后才算出，本扫描存入，下扫描并入 udiFault。 *)
@@ -218,9 +235,13 @@ aValveOut:=fbDevices.aValveOut;
 aValveOutAux:=fbDevices.aValveOutAux;
 fbPlant(xEnable:=xSimulation,stSettings:=stSim,aStatus:=aDeviceStatus);
 (* 十二、集中发布状态；机械手/定长/回刀卡在哪一步，可从对应 ui...Step 追踪。 *)
+(* 故障一律清运行态：故障原因消失后不会自己恢复运行，必须重新按启动。 *)
+IF stStatus.eState=E_MachineState.Fault THEN xRunState:=FALSE; END_IF
 stStatus.eMode:=stCommand.eMode; stStatus.eAutoStep:=fbAuto.eStep;
 stStatus.xSimulation:=xSimulation; stStatus.xRealBackendAvailable:=xAnyReal;
-stStatus.xAnyRealDevice:=xAnyReal; stStatus.wRealDeviceMask:=wRealMask;
+(* 对外掩码仍是 WORD，索引 17（第 16 位）不进这个字段；看真实接管请用 dwRealMask 内部量。 *)
+stStatus.xAnyRealDevice:=xAnyReal; stStatus.wRealDeviceMask:=DWORD_TO_WORD(dwRealMask);
+stStatus.xRunState:=xRunState;
 stStatus.xRelativeVerify:=stReal.xRelativeVerify;
 stStatus.xSafetyBypassed:=xSafetyBypassActive AND xAnyReal;
 stStatus.uiSafetySource:=uiSafetySource; stStatus.uiInitReject:=uiInitReject;

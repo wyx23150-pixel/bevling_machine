@@ -32,5 +32,6 @@ STRUCT
 	wRealDeviceMask : WORD; (* 真实设备接管掩码，第 i 位置位表示设备 i 走真实轴；供上位机核对。 *)
 	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝；回零已并入初始化流程，当前无拒绝分支，字段预留。 *)
 	xRealAxesHomed : BOOL; (* 所有已接管的真实轴都已完成回零；未接真实轴时为 TRUE。 *)
+	xRunState : BOOL; (* 运行态锁存：按启动置 TRUE，按停止、安全许可丢失或进故障清 FALSE；没有它无法区分"锁存未解除"和"按钮没接"。 *)
 END_STRUCT
 END_TYPE

@@ -9,7 +9,10 @@
 
    当前分配建议（硬件工程师可调整，调整后同步改本注释即可）：
      DO  GL20_0032ETN  QB(I) bit0..bit4  -> G1左 / G1右 / G2 / G3 / G9
+     DO  GL20_0032ETN  QB(I) bit5..bit6  -> 绿灯 / 红灯
      DI  GL20_3200END  DI00..DI09        -> G1左(2) G2(2) G3(2) G9(2) G1右(2)
+     面板 8 点（模式/许可/急停/启动/停止/start/初始化/复位）需另加一块 DI 模块：
+     3200END 的 16 点已用 10 点，只剩 6 点，不够面板用。
    右压板两点放在末尾，现有 G2/G3/G9 的接线和映射都不用动。
 *)
 VAR_GLOBAL
@@ -19,6 +22,10 @@ VAR_GLOBAL
     xDoG2Valve : BOOL; (* G2 侧挡阀：TRUE=下降挡料，FALSE=提升。建议 QB(I) bit1。 *)
     xDoG3Valve : BOOL; (* G3 侧推阀：TRUE=侧推，FALSE=退回。建议 QB(I) bit2。 *)
     xDoG9Valve : BOOL; (* G9 盘刀升降阀：TRUE=下降进刀，FALSE=提升。建议 QB(I) bit3。 *)
+
+    (* ===== 面板指示灯：两个纯输出，只有电平没有反馈 ===== *)
+    xDoLampGreen : BOOL; (* 绿灯：手动/就绪常亮，自动循环运行中慢闪。建议 QB(I) bit5。 *)
+    xDoLampRed : BOOL; (* 红灯：停机或故障时常亮。建议 QB(I) bit6。 *)
 
     (* ===== 数字输入：GL20-3200END，G1 双压板 4 点 + 其余 3 台各 2 点 ===== *)
     (* G1 下压左压板 *)
@@ -44,4 +51,15 @@ VAR_GLOBAL
     (* ===== 预留：喷油 / 吹气（本轮不接，占位避免后期改结构） ===== *)
     xDoG5Spray : BOOL; (* 喷油阀：TRUE=喷油。待分配。 *)
     xDoG6Air : BOOL; (* 吹气阀：TRUE=吹气。待分配。 *)
+
+    (* ===== 测试控制面板输入：符号名固定，通道同样由映射页手工绑定 ===== *)
+    (* 极性：除急停与停止外，均为常开触点，按下/到位为 TRUE。 *)
+    xDiPanelAutoMode : BOOL; (* 自动/手动旋钮：TRUE=自动，FALSE=手动。 *)
+    xDiPanelSafetyPermit : BOOL; (* 安全许可旋钮：TRUE=许可。 *)
+    xDiEStop : BOOL; (* 急停自锁按钮，常开，按下=TRUE=不安全；断线读 FALSE 软件无法分辨，需外部安全回路。 *)
+    xDiPanelRunStart : BOOL; (* 启动按钮，常开，按下=TRUE；上升沿把整机置为运行态。 *)
+    xDiPanelRunStop : BOOL; (* 停止按钮，常闭：未按=TRUE，按下=FALSE；逻辑层取反后按上升沿处理。 *)
+    xDiPanelStart : BOOL; (* start 按钮，常开，按下=TRUE；自动循环启动，须已初始化到 Ready。 *)
+    xDiPanelInit : BOOL; (* 初始化按钮，常开，按下=TRUE。 *)
+    xDiPanelReset : BOOL; (* 报警复位按钮，常开，按下=TRUE。 *)
 END_VAR

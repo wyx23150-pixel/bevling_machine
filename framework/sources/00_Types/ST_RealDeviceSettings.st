@@ -1,7 +1,10 @@
-(* 模块说明：真实设备接管与调试旁路设置。默认全部 FALSE，行为与纯仿真完全一致。 *)
+(* 模块说明：真实设备接管与调试旁路设置。默认接管 2、3、8、9、17 五台（现场已接线的轴与气缸），其余仍走仿真。 *)
 TYPE ST_RealDeviceSettings :
 STRUCT
-axRealDevice : ARRAY[1..17] OF BOOL; (* 逐台接管开关：TRUE = 该编号走真实硬件，FALSE = 走仿真。默认全 FALSE。
+axRealDevice : ARRAY[1..17] OF BOOL :=
+    [FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE];
+    (* 逐台接管开关：TRUE = 该编号走真实硬件，FALSE = 走仿真。默认 2/3/8/9/17 为 TRUE。
+    每次上电或完整下载都会回到这个组合；要临时关某一台，在线改位即可，但重启后恢复。
     索引对照（与 GVL_DeviceIds 的对照表完全一致，换算规则：D 编号=索引，G 编号+8=索引）：
       1=D1 送料皮带    2=D2 切割走刀    3=D3 盘刀旋转    4=D4 定长平移
       5=D5 定长升降    6=D6 保留        7=D7 机械手平移   8=D8 平台旋转
@@ -18,12 +21,13 @@ xSafetyBypass : BOOL; (* 安全许可旁路一级开关；默认 FALSE，必须�
 xSafetyBypassConfirm : BOOL; (* 安全许可旁路二级确认；默认 FALSE，防止误点单开关就旁路。 *)
 xUseRealMaterial : BOOL; (* TRUE 才使用真实定长光电；默认 FALSE 继续由 FB_SimPlant 产生来料。 *)
 lrVerifyDistance : LREAL := 1.0; (* 相对验证单段距离，mm；首轮建议 0.5~2.0，代码内再限幅 20。 *)
-lrVerifyVelocity : LREAL := 2.0; (* 相对验证速度，mm/s；同时作为真实设备的手动速度上限。 *)
+lrVerifyVelocity : LREAL := 2.0; (* 相对验证速度，mm/s；只用于未回零时的低速往返验证，不再兼作手动限速。 *)
 lrVerifyAcceleration : LREAL := 50.0; (* 相对验证加速度，mm/s2。 *)
 lrVerifyDeceleration : LREAL := 50.0; (* 相对验证减速度，mm/s2。 *)
 tVerifyDwell : TIME := T#500MS; (* 正向到位后的停留，保证 Execute 拉低至少一个扫描以形成新上升沿。 *)
 lrVerifyMeasuredByHand : LREAL; (* 人工用百分表量到的正向段实际位移，mm；用于核对轴单位标定。 *)
 lrHomePosition : LREAL := 0.0; (* 预留：回零完成后的坐标由轴配置的“回零坐标”决定，MC_Homing 没有 Position 入口，本字段当前不参与下发。 *)
 tHomeTimeout : TIME := T#30S; (* 单轴回零超时；超时报 2004，防止找不到原点时无限等待。 *)
+lrManualVelocityMax : LREAL := 200.0; (* 手动模式速度上限，mm/s（旋转轴为每秒角度）；放在结构体末尾，避免新增字段让已有在线变量错位。 *)
 END_STRUCT
 END_TYPE
