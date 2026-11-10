@@ -22,7 +22,7 @@ VAR
     tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
     tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_ClearTransfer
 (* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
 IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
 xEntry := uiStep <> uiPrevStep;
@@ -39,7 +39,8 @@ IF F_Done(aStatus[12], udiToken) THEN uiStep := 20; END_IF;
 20: (* Q020 推动气缸 G3 放开。 *)
 aCommand[11] := F_Command(E_DeviceAction.Position, udiToken, 0.0, stRecipe.lrPositionVelocity);
 IF F_Done(aStatus[11], udiToken) THEN uiStep := 30; END_IF;
-30: (* Q030 侧挡 G2 下降；继电器选择由当前料型决定。 *)
+30: (* Q030 侧挡 G2 下降。目标固定发 1.0：本层不知道侧挡是单缸还是 300/450/600 三缸组，
+   由设备层自己解释——仿真气缸按 1.0 到伸出端，真实三缸组按当前料型选缸下降。 *)
 aCommand[10] := F_Command(E_DeviceAction.Position, udiToken, 1.0, stRecipe.lrPositionVelocity);
 IF F_Done(aStatus[10], udiToken) THEN uiStep := 1000; END_IF;
 1000: (* 本支线完成，保持至 xExecute 撤销。 *) ;

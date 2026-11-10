@@ -22,7 +22,7 @@ VAR
 	lrVelocityMax : LREAL; (* 本扫描速度上限；真实设备收紧到验证速度，防止全速冲出。 *)
 	uiPressed : UINT; (* 本扫描该设备同时按下的手动按钮个数；大于 1 视为冲突并拒绝。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_ManualControl
 (* 每扫描重新判断按钮冲突；无合法请求的设备由整机统一撤销动作。 *)
 uiRejectDevice:=0;
 FOR i:=1 TO 17 DO
@@ -33,10 +33,23 @@ FOR i:=1 TO 17 DO
         (* 先撤销本设备请求，只有命中合法按钮时才在下面重新写入。否则松开点动后，
            上一扫描的 Jog 会一直残留在共享请求数组里，真实轴靠 None/Stop 停止的逻辑永远等不到。 *)
         aCommand[i]:=F_Command(E_DeviceAction.None,0,0.0,0.0);
-        (* 真实设备的手动速度收紧到验证速度，避免首次试车全速冲出去；仿真仍用 0.1..100。 *)
+        (* 真实设备的手动速度上限由 lrManualVelocityMax 决定（默认 200）；实际速度取 aManual[i].lrVelocity 与之较小者。 *)
         lrVelocityMax:=100.0;
-        IF stReal.axRealDevice[i] THEN lrVelocityMax:=LIMIT(0.1,stReal.lrVerifyVelocity,100.0); END_IF
-        lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),lrVelocityMax);
+        IF stReal.axRealDevice[i] THEN
+            (* 新字段在未重新初始化的旧下载里可能为 0；兜底 100，避免手动速度变 0 表现为不动作 *)
+            lrVelocityMax:=100.0;
+            IF stReal.lrManualVelocityMax>0.1 THEN lrVelocityMax:=LIMIT(0.1,stReal.lrManualVelocityMax,200.0); END_IF
+        END_IF
+        IF i=8 THEN
+            (* D8 平台旋转轴（主轴）手动默认 3、限速 5；请求值超过上限时按默认 3 走，不要直接跳到 5。 *)
+            lrVelocityMax:=5.0;
+            lrVelocity:=3.0;
+            IF ABS(aManual[i].lrVelocity)<=lrVelocityMax THEN
+                lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),lrVelocityMax);
+            END_IF
+        ELSE
+            lrVelocity:=LIMIT(0.1,ABS(aManual[i].lrVelocity),lrVelocityMax);
+        END_IF
         (* 任意两个手动按钮同时按下都算冲突：正反点动、点动与定位/运行/回零、定位与运行/回零、运行与回零。 *)
         uiPressed:=0;
         IF aManual[i].xJogPositive THEN uiPressed:=uiPressed+1; END_IF

@@ -8,33 +8,43 @@
    若现场接线极性相反，只在本层取反，不改上层任何流程或互锁代码。
 
    当前分配建议（硬件工程师可调整，调整后同步改本注释即可）：
-     DO  GL20_0032ETN  QB(I) bit0..bit4  -> G1左 / G1右 / G2 / G3 / G9
-     DO  GL20_0032ETN  QB(I) bit5..bit6  -> 绿灯 / 红灯
-     DI  GL20_3200END  DI00..DI09        -> G1左(2) G2(2) G3(2) G9(2) G1右(2)
-     面板 8 点（模式/许可/急停/启动/停止/start/初始化/复位）需另加一块 DI 模块：
-     3200END 的 16 点已用 10 点，只剩 6 点，不够面板用。
-   右压板两点放在末尾，现有 G2/G3/G9 的接线和映射都不用动。
+     DO  GL20_0032ETN  QB(I) bit0..bit4  -> G1左 / G1右 / G2-300 / G2-450 / G2-600
+     DO  GL20_0032ETN  QB(I) bit5..bit6  -> G9 / 备用
+     DO  指示灯另分配                    -> 绿灯 / 红灯
+     DI  GL20_3200END  DI00..DI09        -> G1左(2) G2-300(2) G3(2) G9(2) G1右(2)
+     DI  新增 4 点                       -> G2-450(2) G2-600(2)
+
+   注意：G2 从单缸改成 300/450/600 三缸后，输出多占 2 点、输入多占 4 点。
+   3200END 的 16 点 DI 原本已用 10 点，加 4 点后剩 2 点，仍然不够面板 8 点用，
+   面板输入必须另加一块 DI 模块（这一点与改造前结论一致）。
+   旧符号 xDoG2Valve / xDiG2Retract / xDiG2Extend 已停用，保留仅为避免已画好的
+   映射页断开时报“符号不存在”，物理通道改绑到下方三个新阀与六个新限位符号。
 *)
 VAR_GLOBAL
-    (* ===== 数字输出：GL20-0032ETN，5 路单电控阀，高电平使能 ===== *)
+    (* ===== 数字输出：GL20-0032ETN，单电控阀，高电平使能 ===== *)
     xDoG1ValveL : BOOL; (* G1 左压板阀：TRUE=下压，FALSE=抬起。建议 QB(I) bit0。 *)
-    xDoG1ValveR : BOOL; (* G1 右压板阀：与左阀同命令同步动作。建议 QB(I) bit4。 *)
-    xDoG2Valve : BOOL; (* G2 侧挡阀：TRUE=下降挡料，FALSE=提升。建议 QB(I) bit1。 *)
-    xDoG3Valve : BOOL; (* G3 侧推阀：TRUE=侧推，FALSE=退回。建议 QB(I) bit2。 *)
-    xDoG9Valve : BOOL; (* G9 盘刀升降阀：TRUE=下降进刀，FALSE=提升。建议 QB(I) bit3。 *)
+    xDoG1ValveR : BOOL; (* G1 右压板阀：与左阀同命令同步动作。建议 QB(I) bit1。 *)
+    xDoG2Valve300 : BOOL; (* G2 料型 300 侧挡阀：TRUE=该缸下降挡料，FALSE=提升。建议 QB(I) bit2。 *)
+    xDoG2Valve450 : BOOL; (* G2 料型 450 侧挡阀：TRUE=该缸下降挡料，FALSE=提升。建议 QB(I) bit3。 *)
+    xDoG2Valve600 : BOOL; (* G2 料型 600 侧挡阀：TRUE=该缸下降挡料，FALSE=提升。建议 QB(I) bit4。 *)
+    xDoG3Valve : BOOL; (* G3 侧推阀：TRUE=侧推，FALSE=退回。建议 QB(I) bit5。 *)
+    xDoG9Valve : BOOL; (* G9 盘刀升降阀：TRUE=下降进刀，FALSE=提升。建议 QB(I) bit6。 *)
+
+    (* ===== 已停用：G2 原单缸阀。物理接线改绑 xDoG2Valve300/450/600，本符号保留不复用。 ===== *)
+    xDoG2Valve : BOOL; (* 停用：G2 单缸阀旧符号，程序不再写入，保留仅为兼容已有映射页。 *)
 
     (* ===== 面板指示灯：两个纯输出，只有电平没有反馈 ===== *)
-    xDoLampGreen : BOOL; (* 绿灯：手动/就绪常亮，自动循环运行中慢闪。建议 QB(I) bit5。 *)
-    xDoLampRed : BOOL; (* 红灯：停机或故障时常亮。建议 QB(I) bit6。 *)
+    xDoLampGreen : BOOL; (* 绿灯：手动/就绪常亮，自动循环运行中慢闪。 *)
+    xDoLampRed : BOOL; (* 红灯：停机或故障时常亮。 *)
 
-    (* ===== 数字输入：GL20-3200END，G1 双压板 4 点 + 其余 3 台各 2 点 ===== *)
+    (* ===== 数字输入：GL20-3200END，G1 双压板 4 点 + G3/G9 各 2 点 + G2 三缸 6 点 ===== *)
     (* G1 下压左压板 *)
     xDiG1LRetract : BOOL; (* 左缸抬起到位。建议 DI00。 *)
     xDiG1LExtend : BOOL; (* 左缸下压到位。建议 DI01。 *)
 
-    (* G2 侧挡升降 *)
-    xDiG2Retract : BOOL; (* G2 提升到位。建议 DI02。 *)
-    xDiG2Extend : BOOL; (* G2 下降到位。建议 DI03。 *)
+    (* G2 侧挡 300 缸 *)
+    xDiG2_300Retract : BOOL; (* 300 缸提升到位。建议 DI02。 *)
+    xDiG2_300Extend : BOOL; (* 300 缸下降到位。建议 DI03。 *)
 
     (* G3 侧推气缸 *)
     xDiG3Retract : BOOL; (* G3 退回到位。建议 DI04。 *)
@@ -47,6 +57,19 @@ VAR_GLOBAL
     (* G1 下压右压板：与左压板同属设备索引 9，两组传感器必须同时到位才算该端到位 *)
     xDiG1RRetract : BOOL; (* 右缸抬起到位。建议 DI08。 *)
     xDiG1RExtend : BOOL; (* 右缸下压到位。建议 DI09。 *)
+
+    (* G2 侧挡 450 / 600 缸：新增 4 点，3200END 已无空位，需另加 DI 模块或换 32 点模块 *)
+    xDiG2_450Retract : BOOL; (* 450 缸提升到位。 *)
+    xDiG2_450Extend : BOOL; (* 450 缸下降到位。 *)
+    xDiG2_600Retract : BOOL; (* 600 缸提升到位。 *)
+    xDiG2_600Extend : BOOL; (* 600 缸下降到位。 *)
+
+    (* ===== 已停用：G2 原单缸限位。改用上方三缸各自的六个限位符号。 ===== *)
+    xDiG2Retract : BOOL; (* 停用：G2 单缸提升到位旧符号，程序不再读取。 *)
+    xDiG2Extend : BOOL; (* 停用：G2 单缸下降到位旧符号，程序不再读取。 *)
+
+    (* ===== 定长光电：D6，遮挡=有料。通道由映射页手工绑定，接哪个模块哪一位都行 ===== *)
+    xDiMaterialLength : BOOL; (* 定长光电：TRUE=被遮挡=料已到位。建议接在还空着的 DI 上。 *)
 
     (* ===== 预留：喷油 / 吹气（本轮不接，占位避免后期改结构） ===== *)
     xDoG5Spray : BOOL; (* 喷油阀：TRUE=喷油。待分配。 *)

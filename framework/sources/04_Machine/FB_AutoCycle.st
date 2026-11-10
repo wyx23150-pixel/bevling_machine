@@ -27,14 +27,17 @@ VAR
     ePrevStep : E_AutoStep := E_AutoStep.Fault; (* 上扫描主工序状态，用于产生步骤入口标志。 *)
     udiToken : UDINT; (* 本步骤专用动作序号；同一步中的设备共用该号，以排除旧完成信号。 *)
     udiSpindleToken : UDINT; (* 盘刀运行命令序号，切割过程中保持该号，避免重复重启盘刀命令。 *)
+    udiPressToken : UDINT; (* G1 下压保位序号；PressDown 入口分配，后续步骤持续用该号重发，保证单电控阀不断电。 *)
+    udiKnifeToken : UDINT; (* G9 下刀保位序号；KnifeDown 入口分配，同上。 *)
     xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
     xSawSensorClear : BOOL; (* 本轮送料已观察到光电离开；须先有该标志再接受新到位，防止残留信号触发。 *)
     tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
+    tStepLimit : TIME; (* 本扫描用的步骤超时值：切割步取 tCutTimeout，其余取 tStepTimeout。 *)
     xGuardOK : BOOL; (* 步骤守护判据：当前步依赖的前提是否仍满足，FALSE 时立即报错退出，不等步超时。 *)
     fbClear : FB_ClearanceUnit; (* 切割前两路并行避让流程。 *)
     fbPost : FB_PostCut; (* 切割后抬刀、抬压及三路收尾流程。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_AutoCycle
 (* 完成标志每扫描先清零；本流程在许可撤销后复位，不保留中断点续跑。 *)
 xDone := FALSE;
 IF NOT xRun THEN eStep:=E_AutoStep.Idle; xError:=FALSE; udiErrorID:=0; xSawSensorClear:=FALSE; END_IF
@@ -42,10 +45,13 @@ IF NOT xRun THEN eStep:=E_AutoStep.Idle; xError:=FALSE; udiErrorID:=0; xSawSenso
 xEntry := eStep <> ePrevStep;
 IF xEntry THEN udiToken := F_NextID(udiCounter); END_IF
 ePrevStep := eStep;
-(* 送料等料不计步骤超时；其余执行步按运行配方监控。 *)
+(* 送料等料不计步骤超时；其余执行步按运行配方监控。
+   切割步单独用 tCutTimeout：走刀行程长，和其它单动作步共用一个 30 秒很容易误超时。 *)
+tStepLimit := stRecipe.tStepTimeout;
+IF eStep = E_AutoStep.Cutting THEN tStepLimit := stRecipe.tCutTimeout; END_IF
 tonStep(IN:=xRun AND NOT xEntry AND (eStep<>E_AutoStep.Idle)
     AND (eStep<>E_AutoStep.FeedWait) AND (eStep<>E_AutoStep.Complete)
-    AND (eStep<>E_AutoStep.Fault),PT:=stRecipe.tStepTimeout);
+    AND (eStep<>E_AutoStep.Fault),PT:=tStepLimit);
 IF xRun AND NOT xError THEN
 CASE eStep OF
 (* 待机转入送料；没有直接跳到切割。 *)
@@ -72,25 +78,34 @@ E_AutoStep.Rotate:
     IF F_Done(aStatus[8],udiToken) THEN eStep:=E_AutoStep.PressDown; END_IF
 (* G1 下压到位。 *)
 E_AutoStep.PressDown:
-    aCommand[9]:=F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
-    IF F_Done(aStatus[9],udiToken) THEN eStep:=E_AutoStep.KnifeDown; END_IF
-(* G9 盘刀下降到位。 *)
-E_AutoStep.KnifeDown:
-    aCommand[17]:=F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
-    IF F_Done(aStatus[17],udiToken) THEN eStep:=E_AutoStep.SpindleOn; END_IF
-(* D3 盘刀开始旋转，完成序号匹配且运行反馈成立后允许走刀。 *)
+    IF xEntry THEN udiPressToken:=udiToken; END_IF
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiPressToken,1.0,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[9],udiPressToken) THEN eStep:=E_AutoStep.SpindleOn; END_IF
+(* D3 盘刀先转起来，转稳了再下刀；此时刀还没下来，G1 保持压紧。 *)
 E_AutoStep.SpindleOn:
     udiSpindleToken:=udiToken;
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiPressToken,1.0,stRecipe.lrPositionVelocity);
     aCommand[3]:=F_Command(E_DeviceAction.Run,udiSpindleToken,0.0,stRecipe.lrSpindleVelocity);
-    IF F_Done(aStatus[3],udiSpindleToken) AND aStatus[3].xActive THEN eStep:=E_AutoStep.Cutting; END_IF
+    IF F_Done(aStatus[3],udiSpindleToken) AND aStatus[3].xActive THEN eStep:=E_AutoStep.KnifeDown; END_IF
+(* G9 盘刀下降到位；下降全程 D3 保持运行。 *)
+E_AutoStep.KnifeDown:
+    IF xEntry THEN udiKnifeToken:=udiToken; END_IF
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiPressToken,1.0,stRecipe.lrPositionVelocity);
+    aCommand[3]:=F_Command(E_DeviceAction.Run,udiSpindleToken,0.0,stRecipe.lrSpindleVelocity);
+    aCommand[17]:=F_Command(E_DeviceAction.Position,udiKnifeToken,1.0,stRecipe.lrPositionVelocity);
+    IF F_Done(aStatus[17],udiKnifeToken) THEN eStep:=E_AutoStep.Cutting; END_IF
 (* 保持 D3 运行，G6 吹气，D2 走到回刀起点加切割长度；以 D2 到位作为切割完成。 *)
 E_AutoStep.Cutting:
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiPressToken,1.0,stRecipe.lrPositionVelocity);
+    aCommand[17]:=F_Command(E_DeviceAction.Position,udiKnifeToken,1.0,stRecipe.lrPositionVelocity);
     aCommand[3]:=F_Command(E_DeviceAction.Run,udiSpindleToken,0.0,stRecipe.lrSpindleVelocity);
     aCommand[14]:=F_Command(E_DeviceAction.Run,udiToken,0.0,0.0);
     aCommand[2]:=F_Command(E_DeviceAction.Position,udiToken,stRecipe.lrCutHome+stRecipe.lrCutLength,stRecipe.lrCutVelocity);
     IF F_Done(aStatus[2],udiToken) THEN eStep:=E_AutoStep.StopCut; END_IF
 (* 撤销 D3/G6 运行请求，等待盘刀停止且吹气关闭后收尾。 *)
 E_AutoStep.StopCut:
+    aCommand[9]:=F_Command(E_DeviceAction.Position,udiPressToken,1.0,stRecipe.lrPositionVelocity);
+    aCommand[17]:=F_Command(E_DeviceAction.Position,udiKnifeToken,1.0,stRecipe.lrPositionVelocity);
     IF NOT aStatus[3].xActive AND NOT aStatus[3].xBusy AND NOT aStatus[14].xActive THEN eStep:=E_AutoStep.PostCut; END_IF
 (* 先抬刀再抬压，随后三支线同步执行；全部结束才完成本轮。 *)
 E_AutoStep.PostCut:
@@ -117,13 +132,17 @@ CASE eStep OF
 (* 无守护：要么在等外部条件，要么本步本身就在建立条件。 *)
 E_AutoStep.Idle, E_AutoStep.FeedWait, E_AutoStep.StopFeed,
 E_AutoStep.Push, E_AutoStep.Clearance, E_AutoStep.Rotate,
-E_AutoStep.PressDown, E_AutoStep.KnifeDown, E_AutoStep.StopCut,
+E_AutoStep.PressDown, E_AutoStep.StopCut,
 E_AutoStep.PostCut, E_AutoStep.Complete, E_AutoStep.Fault:
     xGuardOK := TRUE;
 
-(* 起盘刀前：必须已压紧、已下刀，否则不该让刀转起来。 *)
+(* 起盘刀前：只要已压紧；此时刀还没下来，不判下刀。 *)
 E_AutoStep.SpindleOn:
-    xGuardOK := F_At(aStatus[9],1.0) AND F_At(aStatus[17],1.0);
+    xGuardOK := F_At(aStatus[9],1.0);
+
+(* 下刀期间：压紧且盘刀必须已经在转，不能拿一把没转的刀往下扎。 *)
+E_AutoStep.KnifeDown:
+    xGuardOK := F_At(aStatus[9],1.0) AND aStatus[3].xActive;
 
 (* 切割全程：压紧、下刀、盘刀运行三者都必须保持。 *)
 E_AutoStep.Cutting:

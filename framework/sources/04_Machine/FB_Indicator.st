@@ -18,7 +18,7 @@ VAR
 	tonBlink : TON; (* 闪烁节拍定时器；到点翻转相位并自复位，形成连续方波。 *)
 	xBlinkPhase : BOOL; (* 闪烁相位：TRUE 为亮的那一半。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_Indicator
 (* 先算闪烁节拍：定时器到点就翻转相位并自复位，得到占空比 50% 的连续方波。
    IN 取 Q 的反相做自复位，Q 每次只保持一个扫描，正好当翻转脉冲用。 *)
 tonBlink(IN := NOT tonBlink.Q, PT := tBlinkHalf);

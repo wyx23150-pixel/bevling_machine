@@ -27,7 +27,7 @@ VAR
     xEntry : BOOL; (* 本扫描为新步骤入口；用于分配新序号并复位步骤超时计时。 *)
     tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_PostCut
 IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF
 (* 每个总步骤分配新序号；等待三路期间保留总步骤超时。 *)
 xEntry := uiStep <> uiPrevStep;
@@ -37,7 +37,8 @@ tonStep(IN:=xExecute AND NOT xEntry AND (uiStep>0) AND (uiStep<1000),PT:=stRecip
 IF xExecute AND NOT xError THEN
     CASE uiStep OF
     0: (* 待机，执行许可有效后进入抬刀。 *) uiStep := 10;
-    10: (* 先 G9 盘刀提升，等待本次序号完成。 *)
+    10: (* 先 G9 盘刀提升；同时保持 G1 下压，刀没抬起来之前不能松压板。 *)
+        aCommand[9] := F_Command(E_DeviceAction.Position,udiToken,1.0,stRecipe.lrPositionVelocity);
         aCommand[17] := F_Command(E_DeviceAction.Position,udiToken,0.0,stRecipe.lrPositionVelocity);
         IF F_Done(aStatus[17],udiToken) THEN uiStep := 20; END_IF
     20: (* 再 G1 下压提升，等待本次序号完成。 *)

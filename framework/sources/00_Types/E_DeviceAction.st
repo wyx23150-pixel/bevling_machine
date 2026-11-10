@@ -10,4 +10,3 @@ TYPE E_DeviceAction :
     Home := 5 (* 回零：按轴配置的回零方式寻找原点，完成后把轴坐标设为回零坐标 *)
 );
 END_TYPE
-

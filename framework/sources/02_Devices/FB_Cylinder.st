@@ -15,7 +15,7 @@ END_VAR
 VAR
     fbSimulation : FB_SimDevice; (* 内部设备仿真实例，真实设备适配尚未接入。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_Cylinder
 (* 真实设备适配尚未接入；关闭仿真时返回 3001，避免误认为已具备实机控制。 *)
 fbSimulation(xEnable := xEnable AND xSimulation, xReset := xReset,
     xStall := xStall, xInjectFault := xInjectFault,

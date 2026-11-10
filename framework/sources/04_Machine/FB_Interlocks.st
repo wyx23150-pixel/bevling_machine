@@ -27,7 +27,7 @@ VAR
     uiStructDevice : UINT; (* 最后一个因机构条件被拒的设备索引。 *)
     tonViolation : TON; (* 机构违规去抖定时器。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_Interlocks
 (* 以下为普通程序互锁；实际急停、门锁、失气等安全功能须由最终硬件方案实现。 *)
 uiBlockedDevice:=0;
     xStructBlocked:=FALSE;
@@ -54,6 +54,9 @@ FOR i:=1 TO 17 DO
         9:
             IF aRequest[i].lrTarget>0.5 THEN
                 xAllowed:=xAllowed AND NOT aStatus[8].xBusy AND xKnifeUp AND F_At(aStatus[2],stRecipe.lrCutHome);
+            ELSE
+                (* 抬起前盘刀必须先抬起，否则刀还在工件里就松了压板。 *)
+                xAllowed:=xAllowed AND xKnifeUp;
             END_IF
         (* G9 下刀时，下压到位、旋转停止、定长升起、流利条下降、侧挡下降。 *)
         17:

@@ -1,5 +1,5 @@
-(* 模块说明：真实轴适配层。把统一设备命令翻译成 SoftMotion 动作，并回写与仿真完全一致的接收/完成序号。 *)
 FUNCTION_BLOCK FB_RealAxis
+(* 模块说明：真实轴适配层。把统一设备命令翻译成 SoftMotion 动作，并回写与仿真完全一致的接收/完成序号。 *)
 VAR_IN_OUT
 	Axis : AXIS_REF_SM3; (* 轴节点引用，编译期强制绑定；未接轴无法通过编译，不存在空指针。 *)
 END_VAR
@@ -49,7 +49,7 @@ VAR
 	lrRelVelocity : LREAL; (* 本次相对定位速度，取正值。 *)
 	lrCmdVelocity : LREAL; (* 连续运行与点动的限幅后速度，带符号。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_RealAxis
 (* ===== 1. 读取块无条件调用，保证反馈新鲜 ===== *)
 fbReadPos(Axis := Axis, Enable := TRUE);
 fbReadStatus(Axis := Axis, Enable := TRUE);
@@ -195,9 +195,9 @@ ELSE
 		(* 连续运行：按设备配置限幅，不使用验证低速。 *)
 		lrCmdVelocity := LIMIT(-stConfig.lrMaxVelocity, stCommand.lrVelocity, stConfig.lrMaxVelocity);
 	50:
-		(* 点动：额外用验证速度作为上限，防止手动全速冲出去。 *)
+		(* 点动：用设备最大速度与手动上限 lrManualVelocityMax 的较小者限幅；不能再用验证速度，否则手动最高只有 2mm/s。 *)
 		lrCmdVelocity := LIMIT(0.01, ABS(stCommand.lrVelocity),
-			MIN(stConfig.lrMaxVelocity, stReal.lrVerifyVelocity));
+			MIN(stConfig.lrMaxVelocity, stReal.lrManualVelocityMax));
 		IF stCommand.lrVelocity < 0.0 THEN lrCmdVelocity := -lrCmdVelocity; END_IF
 	END_CASE
 

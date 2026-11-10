@@ -6,16 +6,16 @@
 
    ===== 17 个设备索引对照表 =====
    索引  代号  设备名称            类型       真实适配   绑定对象
-   1     D1    送料皮带电机        Motor      仿真       -
-   2     D2    切割走刀/回刀轴     Axis       已接       Axis_1     汇川 SV660N
-   3     D3    盘刀旋转电机        Motor      已接       pandao     汇川 SV660N，按线性模式配置
-   4     D4    定长平移轴          Axis       仿真       ASDA_E3_1  台达 ASDA-B3-E，尚未接管
+   1     D1    送料皮带/输送轴     Axis       已接       songliao   点动/连续运行
+   2     D2    切割走刀/回刀轴     Axis       已接       qiege      -
+   3     D3    盘刀旋转电机        Axis       已接       pandao     按线性模式配置
+   4     D4    定长平移轴          Axis       仿真       -          尚未接管
    5     D5    定长升降            Axis       仿真       -          0=升起避让，1=下降检测
-   6     D6    保留                -          -          -          编号空置，不要使用
+   6     D6    定长光电            Sensor     已接       xDiMaterialLength 只读；TRUE=有料，遮挡即到位
    7     D7    机械手平移          Axis       仿真       -
-   8     D8    平台旋转轴          Axis       已接       ASDA_E3_1  台达 ASDA-B3-E
+   8     D8    平台旋转轴          Axis       已接       xuanzhuan  台达 ASDA-B3-E
    9     G1    下压气缸            Cylinder   已接       xDoG1ValveL/R  0=抬起，1=下压；左右双缸同动
-   10    G2    侧挡升降            Cylinder   已接       xDoG2Valve 0=提升，1=下降
+   10    G2    侧挡升降（三缸）    Cylinder   已接       xDoG2Valve300/450/600 0=三缸全提，300/450/600=对应缸下降
    11    G3    推动气缸            Cylinder   已接       xDoG3Valve 0=放开，1=侧推
    12    G4    流利条升降          Cylinder   仿真       -          初始在提升端
    13    G5    喷油阀              Valve      仿真       xDoG5Spray 预留，待分配输出点
@@ -25,9 +25,9 @@
    17    G9    盘刀升降            Cylinder   已接       xDoG9Valve 0=提升，1=下降进刀
 
    报警码换算：整机报警 = 10000 + 索引。
-     例：10001 = D1 皮带、10009 = G1 下压、10017 = G9 下刀。
+     例：10001 = D1 皮带、10009 = G1 下压、10010 = G2 侧挡、10017 = G9 下刀。
      注意 10001 不是「1 号报警」，而是设备 1；真正的设备故障先看 udiErrorID 的千位。
-   已在 FB_DeviceManager 中实现真实适配的编号：2、3、8（真实轴）与 9、10、11、17（真实气缸）。
+   已在 FB_DeviceManager 中实现真实适配的编号：1、2、3、8（真实轴）、6（真实光电）与 9、10、11、17（真实气缸）。
    其余编号把 stReal.axRealDevice[i] 置 TRUE 会立即报 3002，不会被静默当仿真跑。 *)
 
 VAR_GLOBAL CONSTANT
@@ -36,10 +36,15 @@ VAR_GLOBAL CONSTANT
     D3_Spindle : UINT := 3; (* D3 盘刀旋转电机，设备数组索引 3。 *)
     D4_LengthMove : UINT := 4; (* D4 定长平移轴，设备数组索引 4。 *)
     D5_LengthLift : UINT := 5; (* D5 定长升降，0 升起避让，1 下降检测，索引 5。 *)
+    D6_LengthSensor : UINT := 6; (* D6 定长光电（只读传感器），TRUE=有料，索引 6。 *)
     D7_GripperMove : UINT := 7; (* D7 机械手平移，索引 7；索引 6 为保留设备 D6。 *)
     D8_Rotate : UINT := 8; (* D8 平台旋转轴，设备数组索引 8。 *)
     G1_Press : UINT := 9; (* G1 下压气缸，0 抬起，1 下压，索引 9。 *)
-    G2_SideStop : UINT := 10; (* G2 侧挡升降，0 提升，1 下降；按料型选择继电器，索引 10。 *)
+    G2_SideStop : UINT := 10; (* G2 侧挡升降（三缸一组），目标 0=全提，300/450/600=对应缸下降，索引 10。 *)    (* G2 三个侧挡缸的料型号：同时作为设备 10 的命令目标值（lrTarget）和料型配方值（uiMaterialModel）。
+       三者是同一套编号，不要再单独定义一套；界面上显示 300/450/600 就是这三个位号。 *)
+    G2_Band300 : UINT := 300; (* G2 料型 300 对应的侧挡缸号。 *)
+    G2_Band450 : UINT := 450; (* G2 料型 450 对应的侧挡缸号。 *)
+    G2_Band600 : UINT := 600; (* G2 料型 600 对应的侧挡缸号。 *)
     G3_Push : UINT := 11; (* G3 推动气缸，0 放开，1 侧推，索引 11。 *)
     G4_RollerLift : UINT := 12; (* G4 流利条升降，0 下降，1 提升，索引 12。 *)
     G5_Spray : UINT := 13; (* G5 喷油阀，连续运行请求表示打开，索引 13。 *)

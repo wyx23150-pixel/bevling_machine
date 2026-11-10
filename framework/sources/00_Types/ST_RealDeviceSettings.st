@@ -1,25 +1,26 @@
-(* 模块说明：真实设备接管与调试旁路设置。默认接管 2、3、8、9、17 五台（现场已接线的轴与气缸），其余仍走仿真。 *)
+(* 模块说明：真实设备接管与调试旁路设置。默认接管 1、2、3、8、9、10、17 七台（现场已接线的轴与气缸），其余仍走仿真。 *)
 TYPE ST_RealDeviceSettings :
 STRUCT
 axRealDevice : ARRAY[1..17] OF BOOL :=
-    [FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE];
-    (* 逐台接管开关：TRUE = 该编号走真实硬件，FALSE = 走仿真。默认 2/3/8/9/17 为 TRUE。
+    [TRUE, TRUE, TRUE, FALSE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE];
+    (* 逐台接管开关：TRUE = 该编号走真实硬件，FALSE = 走仿真。默认 1/2/3/6/8/9/10/17 为 TRUE。
     每次上电或完整下载都会回到这个组合；要临时关某一台，在线改位即可，但重启后恢复。
     索引对照（与 GVL_DeviceIds 的对照表完全一致，换算规则：D 编号=索引，G 编号+8=索引）：
       1=D1 送料皮带    2=D2 切割走刀    3=D3 盘刀旋转    4=D4 定长平移
-      5=D5 定长升降    6=D6 保留        7=D7 机械手平移   8=D8 平台旋转
+      5=D5 定长升降    6=D6 定长光电    7=D7 机械手平移   8=D8 平台旋转
       9=G1 下压       10=G2 侧挡升降   11=G3 侧推       12=G4 流利条升降
       13=G5 喷油      14=G6 吹气       15=G7 机械手升降  16=G8 机械手夹爪
       17=G9 盘刀升降
-    本版本只有 2、3、8（真实轴）与 9、10、11、17（真实气缸）已实现适配；
-    其中 9（G1 下压）是左右双压板，共 4 个限位、2 路阀，设备索引仍按 1 个计。
+    本版本只有 1、2、3、8（真实轴）、6（真实光电）与 9、10、11、17（真实气缸）已实现适配；
+    其中 9（G1 下压）是左右双压板，共 4 个限位、2 路阀，设备索引仍按 1 个计；
+    10（G2 侧挡）是 300/450/600 三缸一组，共 6 个限位、3 路阀，索引同样按 1 个计。
     其余编号置 TRUE 会立即报 3002，不会被静默当仿真跑。
     改本数组会让整机强制回 Stopped 并要求重新初始化，见 FB_Machine 的 wRealMask 变化检测。 *)
 xRelativeVerify : BOOL; (* 相对验证模式：未回零的真实轴把 Position 解释为正向 d 再反向 d 的往返；回零成功后自动改走绝对定位。 *)
 xInterlockBypass : BOOL; (* 预留：手动模式已默认不做机构互锁，本开关当前不影响判定；后续手动按需补互锁时再用。 *)
 xSafetyBypass : BOOL; (* 安全许可旁路一级开关；默认 FALSE，必须与二级同时置位才生效。 *)
 xSafetyBypassConfirm : BOOL; (* 安全许可旁路二级确认；默认 FALSE，防止误点单开关就旁路。 *)
-xUseRealMaterial : BOOL; (* TRUE 才使用真实定长光电；默认 FALSE 继续由 FB_SimPlant 产生来料。 *)
+xUseRealMaterial : BOOL := TRUE; (* TRUE 使用真实定长光电（设备 6）的到位信号；FALSE 继续由 FB_SimPlant 产生来料。 *)
 lrVerifyDistance : LREAL := 1.0; (* 相对验证单段距离，mm；首轮建议 0.5~2.0，代码内再限幅 20。 *)
 lrVerifyVelocity : LREAL := 2.0; (* 相对验证速度，mm/s；只用于未回零时的低速往返验证，不再兼作手动限速。 *)
 lrVerifyAcceleration : LREAL := 50.0; (* 相对验证加速度，mm/s2。 *)

@@ -1,15 +1,15 @@
-(* 模块说明：保留的旧单轴低速往返 Demo，当前未周期调用。它不属于新切割机自动工序。 *)
+﻿(* 模块说明：保留的旧单轴低速往返 Demo，当前未周期调用。它不属于新切割机自动工序。 *)
 PROGRAM PRG_AxisDemo
 VAR
     (* 运动控制功能块：伺服使能、复位、停止及位置反馈。 *)
-    fbPower    : MC_Power; (* 旧 Demo 伺服使能功能块，操作对象为 Axis_1。 *)
+    fbPower    : MC_Power; (* 旧 Demo 伺服使能功能块，操作对象为 pandao。 *)
     fbReset    : MC_Reset; (* 旧 Demo 轴故障复位功能块。 *)
     fbStop     : MC_Stop; (* 旧 Demo 受控停止功能块，完成后释放停止锁定。 *)
     fbJog      : MC_Jog; (* 保留的点动实例，当前 Demo 正文未调用。 *)
     fbMoveRel  : MC_MoveRelative; (* 保留的相对定位实例，当前正文使用 fbCycle 执行往返。 *)
     fbMoveAbs  : MC_MoveAbsolute; (* 保留的绝对定位实例，当前 Demo 正文未调用。 *)
     fbCycle    : MC_MoveRelative; (* 实际执行单次往返的相对定位实例，每段使用独立 Execute 触发。 *)
-    fbReadPos  : MC_ReadActualPosition; (* 读取 Axis_1 实际位置，写入旧监控变量 rActPos。 *)
+    fbReadPos  : MC_ReadActualPosition; (* 读取 pandao 实际位置，写入旧监控变量 rActPos。 *)
     fbReadStat : MC_ReadStatus; (* 保留的轴状态读取实例，当前正文未调用。 *)
     fbReadErr  : MC_ReadAxisError; (* 保留的轴错误读取实例，当前正文未调用。 *)
 
@@ -30,7 +30,7 @@ VAR
 	xStartRun: BOOL; (* 历史测试保留启动变量，当前正文未引用。 *)
 	iStep: INT; (* 历史测试保留步骤变量，当前有效步骤为 iCycle。 *)
 	fbMoveVel: MC_MoveVelocity; (* 历史速度运动实例，当前正文未调用。 *)
-	Axis: INT; (* 历史保留 INT 变量，不是 Axis_1 运动轴对象，当前正文未引用。 *)
+	Axis: INT; (* 历史保留 INT 变量，不是 pandao 运动轴对象，当前正文未引用。 *)
 	Execute: BOOL; (* 历史测试保留执行变量，当前正文未引用。 *)
 	rRunVel: LREAL; (* 历史测试保留速度变量，当前正文未引用。 *)
 	rRunAcc: LREAL; (* 历史测试保留加速度变量，当前正文未引用。 *)
@@ -41,18 +41,18 @@ VAR
 	InVelocity: INT; (* 历史测试保留 INT 变量，当前正文未引用。 *)
 	xMoveExec: BOOL; (* 历史测试保留执行变量，当前正文未引用。 *)
 END_VAR
-
+PROGRAM PRG_AxisDemo
 (* 中文注释显示核对：单次低速 20 mm 往返测试。
    GVL_Motion.xStartCycle 的上升沿启动一次循环。
    单程距离最多 20 mm，速度最多 10 mm/s。 *)
 rtCycle(CLK := GVL_Motion.xStartCycle);
 
-fbPower(Axis         := Axis_1,
+fbPower(Axis         := pandao,
         Enable       := GVL_Motion.xEnable,
         bRegulatorOn := TRUE,
         bDriveStart  := TRUE);
 
-fbReset(Axis := Axis_1, Execute := GVL_Motion.xReset);
+fbReset(Axis := pandao, Execute := GVL_Motion.xReset);
 
 IF GVL_Motion.xStop THEN
     xStopRun   := TRUE;
@@ -66,7 +66,7 @@ IF fbPower.Error OR fbCycle.Error OR fbReset.Error OR fbStop.Error THEN
     xStopRun    := TRUE;
 END_IF
 
-fbStop(Axis         := Axis_1,
+fbStop(Axis         := pandao,
        Execute      := xStopRun,
        Deceleration := MIN(MAX(GVL_Motion.rDec, 10.0), 200.0));
 
@@ -135,14 +135,14 @@ ELSE
     xStopRun := TRUE;
 END_CASE
 
-fbCycle(Axis         := Axis_1,
+fbCycle(Axis         := pandao,
         Execute      := fbCycleExec AND NOT xStopRun,
         Distance     := rCycleDist,
         Velocity     := MIN(MAX(GVL_Motion.rVel, 1.0), 10.0),
         Acceleration := MIN(MAX(GVL_Motion.rAcc, 10.0), 200.0),
         Deceleration := MIN(MAX(GVL_Motion.rDec, 10.0), 200.0));
 
-fbReadPos(Axis := Axis_1, Enable := TRUE);
+fbReadPos(Axis := pandao, Enable := TRUE);
 
 GVL_Motion.xPowered    := fbPower.Status;
 GVL_Motion.xBusy       := fbCycle.Busy OR fbStop.Busy;

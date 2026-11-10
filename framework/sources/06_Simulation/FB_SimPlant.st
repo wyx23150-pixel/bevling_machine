@@ -12,7 +12,7 @@ VAR
     xLatched : BOOL; (* 本轮仿真料到位保持标志；定长升起或模型失能时清除。 *)
     tonMaterial : TON; (* 自动仿真来料延时，仅在运行皮带且定长下降到位时计时。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_SimPlant
 (* 定长抬起时清除上次来料；自动方式形成一次延时到位，手动方式直接采用人工传感器。 *)
 IF NOT xEnable OR NOT F_At(aStatus[5],1.0) THEN xLatched:=FALSE; END_IF
 tonMaterial(IN:=xEnable AND stSettings.xAutoMaterial AND aStatus[1].xActive

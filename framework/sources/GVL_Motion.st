@@ -1,7 +1,7 @@
-(* 模块说明：旧单轴 Demo 的操作和监控变量。新切割机框架不使用这些变量；旧 Demo 当前未挂周期任务。 *)
+﻿(* 模块说明：旧单轴 Demo 的操作和监控变量。新切割机框架不使用这些变量；旧 Demo 当前未挂周期任务。 *)
 VAR_GLOBAL
     (* 旧 Demo 操作命令：仅供单轴测试，新整机流程不使用。 *)
-    xEnable     : BOOL; (* 旧 Demo 的 Axis_1 伺服使能请求，TRUE 上使能，FALSE 关闭。 *)
+    xEnable     : BOOL; (* 旧 Demo 的 pandao 伺服使能请求，TRUE 上使能，FALSE 关闭。 *)
     xReset      : BOOL; (* 旧 Demo 轴故障复位请求，接 MC_Reset.Execute。 *)
     xStop       : BOOL; (* 旧 Demo 停止请求；停止完成后释放锁定，再决定是否重新启动。 *)
     xJogFwd     : BOOL; (* 历史正向点动入口，当前旧 Demo 正文未接入。 *)
@@ -31,7 +31,6 @@ VAR_GLOBAL
     xErrorStop  : BOOL; (* 旧 Demo 综合错误显示，与 xAxisError 同步。 *)
     xAxisError  : BOOL; (* 使能、往返、复位或停止功能块任一报错。 *)
     iAxisErrorID: DWORD; (* 历史错误码显示变量，当前正文未更新，需读取实际功能块 ErrorID。 *)
-    rActPos     : LREAL; (* MC_ReadActualPosition 返回的 Axis_1 实际位置，单位 mm。 *)
+    rActPos     : LREAL; (* MC_ReadActualPosition 返回的 pandao 实际位置，单位 mm。 *)
     iState      : INT; (* 旧 Demo 当前 iCycle 步骤镜像，便于在线监控。 *)
 END_VAR
-

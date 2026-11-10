@@ -21,7 +21,7 @@ VAR
     xWasEnabled : BOOL; (* 上扫描通信使能状态；首次使能只记录序号，不执行缓冲区旧命令。 *)
     i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_ModbusInterface
 (* 每扫描清除远程启停脉冲；模式、初始化、复位不属于远程命令。 *)
 xRequest:=FALSE;
 stCommand.xStart:=FALSE;

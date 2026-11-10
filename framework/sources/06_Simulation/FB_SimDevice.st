@@ -22,7 +22,7 @@ VAR
     tonAction : TON; (* 仿真定位或建立连续运行状态的定时器。 *)
     tonJog : TON; (* 点动累计计时器，用于计算位置增量，设定计时上限 24 小时。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_SimDevice
 (* 首次读取初始位置；以后位置由仿真动作累计，不在每周期重新归零。 *)
 IF NOT xBooted THEN
     stStatus.lrPosition := stConfig.lrInitialPosition;
@@ -31,7 +31,10 @@ END_IF
 IF xReset AND NOT xInjectFault THEN
     stStatus.xError := FALSE; stStatus.udiErrorID := 0;
 END_IF
-IF xInjectFault THEN stStatus.xError := TRUE; stStatus.udiErrorID := 9001; END_IF
+IF xInjectFault THEN 
+	stStatus.xError := TRUE;
+	stStatus.udiErrorID := 9001;
+END_IF
 stStatus.xReady := xEnable AND NOT stStatus.xError AND (stConfig.eKind <> E_DeviceKind.Unused);
 
 (* 无许可、无请求或明确 Stop 时取消当前动作并清接收/完成序号。 *)

@@ -41,6 +41,7 @@ VAR
 	xCmdExtend : BOOL; (* 有效命令期望的端点：TRUE 伸出，FALSE 缩回。 *)
 	xTravelling : BOOL; (* 尚未确认到达目标端点。 *)
 END_VAR
+FUNCTION_BLOCK FB_RealCylinder
 rtReset(CLK := xReset);
 
 (* ===== 1. 复位：只清错误与序号，姿态仍由传感器决定 ===== *)

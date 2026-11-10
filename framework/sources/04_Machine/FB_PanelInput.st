@@ -13,7 +13,7 @@ END_VAR
 VAR
     stSelected : ST_PanelInputs; (* 本扫描选中的实体/仿真面板输入快照。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_PanelInput
 (* 这里只处理已归一化的逻辑信号；端子、常开/常闭和必要的输入滤波在实际 I/O 映射时确定。
    面板来源与 xSimulation 解耦：设备可以全仿真而面板用实物按钮，也可以反过来。 *)
 IF xUseRealPanel THEN stSelected:=stReal;

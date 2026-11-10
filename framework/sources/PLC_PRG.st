@@ -8,6 +8,7 @@ VAR
 	fbLamp : FB_Indicator; (* 面板两色指示灯逻辑实例；纯输出，不参与控制。 *)
 	xSafetyBypassActive : BOOL; (* 安全许可两级旁路已生效；仅当一级开关与二级确认同时置位。 *)
 END_VAR
+PROGRAM PLC_PRG
 (* 本程序只在 ETHERCAT1 中周期调用一次；内部功能块沿本调用链每扫描执行。 *)
 (* 0. 面板物理点 -> 逻辑面板：常开/常闭等极性只在这层处理，接线接反改这里一行即可。
    用 xUseRealPanel 而不是 xSimulation 选来源，因为 xSimulation 必须恒为 TRUE（FALSE 整机报 3001），
@@ -57,10 +58,16 @@ fbMachine(
 (* 4. 将整机反馈发布到监控接口，建议调试时从这里查看主步骤和支线步骤。 *)
 GVL_Interface.stStatus:=fbMachine.stStatus;
 GVL_Interface.aDeviceStatus:=fbMachine.aDeviceStatus;
+
+(* 4.5 定长光电（设备 6）接管后，把它本扫描的到位状态发布成真实料信号。
+    这里取的是刚算完的设备状态；FB_Machine 内部读的是上一扫描的同一个值，
+    对送料这种等稳定信号的判断没有影响（扫描周期远小于去抖时间）。 *)
+GVL_IO.xMaterialAtLength := fbMachine.aDeviceStatus[6].xActive;
 (* 5. 形成逻辑输出并下沉到物理点；真实气缸阀电平在此写入 GVL_IO_Physical。 *)
-fbIO(uiMaterialModel:=fbMachine.stStatus.uiActiveMaterialModel,aCommand:=fbMachine.aSelectedCommand,
+fbIO(aCommand:=fbMachine.aSelectedCommand,
         aStatus:=fbMachine.aDeviceStatus,aValveOut:=fbMachine.aValveOut,aValveOutAux:=fbMachine.aValveOutAux,
-    axOutputs:=GVL_IO.axDigitalOutputs,axG2RelayDemand:=GVL_IO.axG2RelayDemand);
+        aG2Valve:=fbMachine.aG2Valve,uiG2Band:=fbMachine.uiG2Band,
+    axOutputs:=GVL_IO.axDigitalOutputs);
 (* 6. 面板指示灯：只读整机状态，不参与任何控制，放在最后算以保证与本扫描状态一致。 *)
 fbLamp(xRunState:=fbMachine.stStatus.xRunState,eState:=fbMachine.stStatus.eState,
     eMode:=fbMachine.stStatus.eMode,udiAlarm:=fbMachine.stStatus.udiAlarm);

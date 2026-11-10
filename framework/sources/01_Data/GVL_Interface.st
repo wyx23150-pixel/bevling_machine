@@ -5,4 +5,3 @@ VAR_GLOBAL
     stStatus : ST_MachineStatus; (* 本模块对外发布的状态；字段含义见其数据类型。 *)
     aDeviceStatus : ARRAY[1..17] OF ST_DeviceStatus; (* 设备管理器汇总反馈，索引 1..17；供工序判断及在线监控。 *)
 END_VAR
-

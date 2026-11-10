@@ -10,4 +10,3 @@ TYPE E_MachineState :
     Fault := 90 (* 报警锁存，清除原因后复位 *)
 );
 END_TYPE
-

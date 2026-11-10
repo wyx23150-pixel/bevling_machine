@@ -6,7 +6,7 @@ VAR_INPUT
     lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连续运行和点动不使用该位置。 *)
     lrVelocity : LREAL; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
 END_VAR
-
+FUNCTION F_Command : ST_DeviceCommand
 (* 只复制字段形成结构体，不等待动作、不直接访问物理设备。 *)
 F_Command.eAction := eAction;
 F_Command.udiID := udiID;

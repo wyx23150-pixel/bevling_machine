@@ -9,4 +9,3 @@ axStall : ARRAY[1..17] OF BOOL; (* 设备卡住注入，索引 1..17；保持忙
 axFault : ARRAY[1..17] OF BOOL; (* 设备故障注入，索引 1..17；先清除注入，再执行报警复位。 *)
 END_STRUCT
 END_TYPE
-

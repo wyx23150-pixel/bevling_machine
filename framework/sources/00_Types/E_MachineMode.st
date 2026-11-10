@@ -6,4 +6,3 @@ TYPE E_MachineMode :
     Automatic := 1 (* 自动循环工序 *)
 );
 END_TYPE
-

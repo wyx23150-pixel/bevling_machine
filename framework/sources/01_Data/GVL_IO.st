@@ -1,4 +1,4 @@
-(* 模块说明：逻辑 I/O 预留接口，尚未绑定物理地址。数字输出数组当前每周期清零；G2 需求仅用于观察。 *)
+(* 模块说明：逻辑 I/O 预留接口，尚未绑定物理地址。数字输出数组当前每周期清零；G2 当前料型仅用于观察。 *)
 VAR_GLOBAL
     (* 当前均为普通逻辑变量，没有 AT %Q / %I 物理地址绑定。 *)
     xSafetyOK : BOOL; (* 安全许可接口或仿真许可，TRUE 允许；不等同于安全级急停回路。 *)
@@ -6,6 +6,5 @@ VAR_GLOBAL
     xMaterialAtLength : BOOL; (* 真实光电到位预留输入，当前未映射物理输入，仿真时不采用此值。 *)
     axDigitalInputs : ARRAY[0..31] OF BOOL; (* 预留数字输入位，索引 0..31；当前未映射到真实输入。 *)
     axDigitalOutputs : ARRAY[0..31] OF BOOL; (* 预留数字输出位，索引 0..31；当前由 FB_IOMap 每周期清 FALSE。 *)
-    axG2RelayDemand : ARRAY[1..3] OF BOOL; (* G2 三路逻辑继电器需求：1=300 料型，2=400，3=600；未映射物理输出。 *)
+    uiG2BandActive : UINT; (* G2 当前实际下降的料型带号 300/450/600；0 表示三缸全部提升，供诊断观察。 *)
 END_VAR
-

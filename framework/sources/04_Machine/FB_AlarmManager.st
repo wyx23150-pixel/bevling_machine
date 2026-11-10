@@ -7,7 +7,7 @@ END_VAR
 VAR_OUTPUT
     udiLatched : UDINT; (* 已锁存的首个非零报警码；后续报警不覆盖，满足复位条件后清零。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_AlarmManager
 (* 只有没有当前报警原因才清锁存；当前代码保留第一个非零报警，后续报警不覆盖。 *)
 IF xReset AND (udiIncoming=0) THEN udiLatched:=0; END_IF
 IF (udiLatched=0) AND (udiIncoming<>0) THEN udiLatched:=udiIncoming; END_IF

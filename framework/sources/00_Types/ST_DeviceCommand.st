@@ -7,4 +7,3 @@ lrTarget : LREAL; (* 目标工程位置；气缸使用约定的 0/1 端点，连
 lrVelocity : LREAL; (* 请求速度，单位随设备工程单位定义；尚未完成实机标定。 *)
 END_STRUCT
 END_TYPE
-

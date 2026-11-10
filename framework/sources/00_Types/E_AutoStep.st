@@ -18,4 +18,3 @@ TYPE E_AutoStep :
     Fault := 900 (* 自动流程错误，退出执行后复位 *)
 );
 END_TYPE
-

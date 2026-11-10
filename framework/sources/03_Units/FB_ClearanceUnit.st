@@ -20,7 +20,7 @@ VAR
     fbLength : FB_ClearLength; (* P 支线：D5 升起、D4 移开。 *)
     fbTransfer : FB_ClearTransfer; (* 切割前流利条/侧推/侧挡避让支线。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_ClearanceUnit
 (* P/Q 两路同一扫描使能；xDone 使用 AND，任一路未完成均不得继续。 *)
 fbLength(xExecute:=xExecute,stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);
 fbTransfer(xExecute:=xExecute,stRecipe:=stRecipe,aCommand:=aCommand,aStatus:=aStatus,udiCounter:=udiCounter);

@@ -22,7 +22,7 @@ VAR
     tonStep : TON; (* 步骤超时定时器；进入新步骤时复位，超时错误码由模块及当前步号组成。 *)
     tonSpray : TON; (* 通用子流程模板的喷油定时器，只有 FB_ReturnKnife 用其完成条件。 *)
 END_VAR
-
+FUNCTION_BLOCK FB_ResetLength
 (* 执行许可撤销即复位；步骤入口换新序号，每步等待本次动作完成，超时码=模块基码+步号。 *)
 IF NOT xExecute THEN uiStep := 0; xError := FALSE; udiErrorID := 0; END_IF;
 xEntry := uiStep <> uiPrevStep;

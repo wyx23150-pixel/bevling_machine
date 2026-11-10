@@ -1,5 +1,8 @@
 # 切割机框架使用说明
 
+> 2026-11-09 汇总入口：[MCP 挂载与开发流程说明](<C:/Users/Lenovo/Desktop/PLC/huichuan/Beveling machine/docs/汇川PLC_MCP挂载与开发流程说明.md>)。
+> 本页包含跨阶段记录；当前轴绑定、接管默认值、面板运行态及生成器差异请结合汇总说明和实际源码核对。
+
 版本：2026-10-28，按流程图 v0.3 搭建，控制权限调整为实体面板决定模式；D2/D4 已接入真实伺服轴，其余设备仍走仿真。
 
 ## 控制来源
@@ -370,6 +373,64 @@ fbHoming(Axis := Axis, Execute := xHomeReq);
 - mojibake：码点在 0x80–0xFF（`模` 的乱码形态 = 230/168/161）
 
 正确的写入方式：不要用 `set_pou_code` 传非 ASCII 内容，改用 `eval_python` 调 `obj.textual_declaration.replace(unicode_text)`，并确保传进去的是真 unicode。修复已有乱码的办法是把它 `encode('latin-1').decode('utf-8')` 还原后重新 `replace()`，全程在 IDE 内完成，不经过传输层。
+
+## SP11 写入规则（2026-11-10 实测，务必遵守）
+
+**SP11（InoProShop V1.9.1.6）的两个 section 是彼此独立的：`textual_declaration.replace()` 只改声明区，`textual_implementation.replace()` 只改正文。**
+
+实测方法：往 `textual_implementation` 写一个标记，回读发现标记只在 `impl` 里、`decl` 长度不变；反过来往 `textual_declaration` 写标记，同样只落在 `decl`。所以「SP11 会把整份文本顶掉」这个说法是错的。
+
+- 真正的坑是**把整份文本（头行+声明区+正文）传给某一个句柄**。那个句柄会把整份 POU 当成自己的内容，于是声明区里同时有变量和程序代码，编译报几百条 `应该采用VAR, VAR_INPUT, VAR_OUTPUT 或 VAR_INOUT 取代…`。之前的记录把这个现象误读成"句柄互相覆盖"，并按相反的做法去改，结果把每个 POU 都写坏了。
+- 正确写法：把 `.st` 在**重复的头行**处切成两段（`FUNCTION_BLOCK X` 在声明块出现一次、在正文上方再出现一次），然后
+  ```python
+  obj.textual_declaration.replace(decl_text)
+  obj.textual_implementation.replace(body_text)
+  ```
+- DUT / GVL 只有声明区，**不要**调用 `textual_implementation`。
+- 新写的 `.st` 必须有重复头行，否则正文无法切出来。`apply_sources` 遇到这种文件会直接报错拒绝，不会把正文静默并进声明区。
+
+### 正确流程（已固化成 MCP 工具）
+
+1. 先在 `framework/sources/**.st` 写好 ST 文本：**头行 + 声明区 + 头行 + 正文**。
+2. 声明区与正文分开各写一次 `replace()`，然后 `project.save()`。
+3. 回读 `textual_declaration.text` 与 `textual_implementation.text` 比对：`decl` 里只有头行+变量，`impl` 里只有正文。
+4. `compile_project` 验证 0 错误；有错先查写入结构，不要先改逻辑。
+5. 写之前先备份工程（`beveling-before-<改动>-<时间>.project`）。
+
+> 2026-11-10 起，第 1~2 步由 MCP 的 `export_sources` / `apply_sources` 两个工具自动完成，
+> 下面的手工步骤只在工具不可用时作为兜底。
+
+## 程序修改工作流（推荐，2026-11-10 起）
+
+`.st` 源码树是**唯一真源**，MCP 提供两个工具做双向同步：
+
+| 工具 | 方向 | 说明 |
+|---|---|---|
+| `export_sources(sourcesRoot)` | 工程 → `.st` | 每个 POU/DUT/GVL 导出成一个完整 `.st`（声明区+正文，正文前重复一次头行），目录结构对应工程树；`overwrite:false` 只补缺失文件 |
+| `apply_sources(sourcesRoot)` | `.st` → 工程 | 只写有差异的对象，在重复头行处切分后**声明区、正文各写一次**，自动备份、保存，最后**编译一次**并按对象归类报错 |
+
+### 标准顺序
+
+1. **拉取**：`export_sources`（先把工程现状同步成 `.st`，防止 IDE 里的手工改动被覆盖）
+2. **改**：只修改 `sources/` 下的 `.st`
+3. **推送**：`apply_sources`（`dryRun:true` 可先看会写哪些）
+4. **看结果**：工具已内置编译，输出按对象分组的错误
+5. **修**：回到第 2 步改 `.st`，再推送，不要直接在 IDE 里改代码
+
+### 规则
+
+- 编译**在全部写完后统一做一次**，不逐个对象编译。
+- 写入默认自动备份为 `<工程名>-before-apply-<时间>.project`。
+- `.st` 里有、工程里没有的对象默认不自动创建，需显式 `createMissing:true`。
+- 工程里有、`.st` 里没有的对象只报告不删除，需要人工确认。
+- 不用 `set_pou_code` 改程序：它走 `"""..."""` 字面量，中文注释会变乱码；改程序一律走 `.st` + `apply_sources`。
+- 新建 `.st` 必须有**重复头行**（声明块一次、正文上方再一次），否则正文无法切分，`apply_sources` 会拒绝写入。
+
+### 写入前后的自检清单
+
+- 写入前：该对象当前的 `decl` 里必须有 `VAR`…`END_VAR`，`impl` 里不能有 `VAR` 段。
+- 写入后：`impl` 第一行应是注释或语句，**不能是 `VAR_INPUT` / `VAR`**。
+- 每次只改少量对象并编译一次，不要一次性推十多个对象再编译。
 
 ## 后续接实机前要补齐
 

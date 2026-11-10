@@ -9,4 +9,3 @@ TYPE E_DeviceKind :
     Valve := 4 (* 开关阀 *)
 );
 END_TYPE
-

@@ -21,6 +21,8 @@ VAR_OUTPUT
 	aSelectedCommand : ARRAY[1..17] OF ST_DeviceCommand; (* 通过统一互锁后的最终设备请求，交设备管理器执行。 *)
 	aValveOut : ARRAY[1..17] OF BOOL; (* 各设备阀电气电平，索引同设备号；供物理映射层下沉到真实输出点。 *)
 	aValveOutAux : ARRAY[1..17] OF BOOL; (* 第二个执行器的阀电气电平，索引同设备号；当前只有 G1 双压板使用。 *)
+	aG2Valve : ARRAY[1..3] OF BOOL; (* G2 三个侧挡阀电气电平 1=300，2=450，3=600；供物理映射层下沉。 *)
+	uiG2Band : UINT; (* G2 当前实际下降的料型带号 300/450/600；0 表示三缸全部提升。 *)
 END_VAR
 VAR
 	stCommand : ST_OperatorCommand; (* 本周期选择并合并后的整机命令；本地停止始终优先于远程。 *)
@@ -63,6 +65,7 @@ VAR
 	uiInitReject : UINT; (* 初始化被拒绝的原因：0 未拒绝；回零已并入初始化流程，当前无拒绝分支，字段预留。 *)
 	i : INT; (* 本扫描数组遍历索引；含义及范围以当前 FOR 循环为准。 *)
 END_VAR
+FUNCTION_BLOCK FB_Machine
 (* 零、派生混跑标志：axRealDevice 全 FALSE 时 xAnyReal 为 FALSE，后续所有分支与改造前一致。 *)
 xAnyReal:=FALSE; dwRealMask:=0;
 FOR i:=1 TO 17 DO
@@ -229,10 +232,13 @@ fbInterlocks(xPermit:=xPermit,xManualMode:=(stStatus.eState=E_MachineState.Manua
 aSelectedCommand:=fbInterlocks.aCommand;
 IF fbInterlocks.xViolated THEN udiInterlockFault:=5000+UINT_TO_UDINT(fbInterlocks.uiViolatedDevice); END_IF
 fbDevices(xEnable:=xSimulation AND xSafetyOK,xSimulation:=xSimulation,xReset:=xResetDevices,
-    xFaultHold:=(fbAlarm.udiLatched<>0),stSim:=stSim,stReal:=stReal,aCommand:=aSelectedCommand);
+    xFaultHold:=(fbAlarm.udiLatched<>0),stSim:=stSim,stReal:=stReal,
+    uiMaterialModel:=stActiveRecipe.uiMaterialModel,aCommand:=aSelectedCommand);
 aDeviceStatus:=fbDevices.aStatus;
 aValveOut:=fbDevices.aValveOut;
 aValveOutAux:=fbDevices.aValveOutAux;
+aG2Valve:=fbDevices.aG2Valve;
+uiG2Band:=fbDevices.uiG2Band;
 fbPlant(xEnable:=xSimulation,stSettings:=stSim,aStatus:=aDeviceStatus);
 (* 十二、集中发布状态；机械手/定长/回刀卡在哪一步，可从对应 ui...Step 追踪。 *)
 (* 故障一律清运行态：故障原因消失后不会自己恢复运行，必须重新按启动。 *)
