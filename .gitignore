@@ -9,6 +9,16 @@
 *.projectbackup
 *.bak
 
+# Whole-project backup copies. Git is the backup of record now, so these are
+# never versioned: apply_sources writes one before every code push, and manual
+# checkpoints (<name>-before-<change>-<time>.project) belong in history only as
+# commits. CODESYS-native .projectarchive checkpoints are still tracked.
+*-before-*.project
+*broken*.project
+*.project.bak-*
+*.project.before-*
+*.project.before
+
 # Generated compiler caches and PLC application binaries
 *.precompilecache
 *.compileinfo
